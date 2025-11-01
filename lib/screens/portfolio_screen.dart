@@ -320,9 +320,6 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                 // White Card Content
                 SliverToBoxAdapter(
                   child: Container(
-                    constraints: BoxConstraints(
-                      minHeight: MediaQuery.of(context).size.height - 80,
-                    ),
                     decoration: BoxDecoration(
                       color: AppColors.lightBackground,
                       borderRadius: BorderRadius.only(
@@ -433,7 +430,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         children: [
           // Chart
           SizedBox(
-            height: 150,
+            height: 160,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               crossAxisAlignment: CrossAxisAlignment.end,
