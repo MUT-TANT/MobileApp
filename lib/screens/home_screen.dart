@@ -150,7 +150,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 opacity: headerOpacity,
                 child: Column(
                   children: [
-                    // Header
+                    // Header (logo only)
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Row(
@@ -161,35 +161,15 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                             height: 48,
                             color: Colors.white,
                           ),
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const NotificationScreen(),
-                                ),
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.notifications_outlined,
-                                color: AppColors.primary,
-                                size: 24,
-                              ),
-                            ),
-                          ),
+                          // Spacer for notification button (positioned separately)
+                          const SizedBox(width: 48),
                         ],
                       ),
                     ),
 
                     // Streak Section
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16),
+                      padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 8, bottom: 4),
                       child: Column(
                         children: [
                           Row(
@@ -236,7 +216,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       ),
                     ),
 
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 20),
                   ],
                 ),
               ),
@@ -520,9 +500,40 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               ],
             ),
 
+            // Notification Button (fades with header but always clickable)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Opacity(
+                opacity: headerOpacity,
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const NotificationScreen(),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.notifications_outlined,
+                      color: AppColors.primary,
+                      size: 24,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
             // Floating Action Button with Speed Dial
             Positioned(
-              bottom: 90,
+              bottom: 20,
               right: 24,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -754,7 +765,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Widget _buildGoalItem({
-    required String icon,
+    required String emoji,
     required String title,
     required double progress,
     required String saved,
@@ -796,10 +807,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               shape: BoxShape.circle,
             ),
             child: Center(
-              child: Image.asset(
-                icon,
-                width: 32,
-                height: 32,
+              child: Text(
+                emoji,
+                style: const TextStyle(fontSize: 32),
               ),
             ),
           ),
