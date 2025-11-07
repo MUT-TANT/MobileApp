@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:stacksave/constants/colors.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/services/wallet_service.dart';
 
 class AddSavingScreen extends StatefulWidget {
   final bool showNavBar;
@@ -21,9 +24,15 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
 
   double _scrollOffset = 0.0;
   String _savingMode = 'Lite Mode'; // 'Lite Mode' or 'Pro Mode'
-  String? _selectedGoal;
+  int? _selectedGoalId; // Changed to int goalId
   String? _selectedCurrency;
   String? _selectedPaymentMethod;
+
+  // Real-time data from backend
+  List<Map<String, dynamic>> _realGoals = [];
+  List<Map<String, dynamic>> _supportedCurrencies = [];
+  bool _isLoadingGoals = true;
+  bool _isLoadingCurrencies = true;
 
   // Get mode info
   Map<String, dynamic> get _modeInfo {
@@ -60,20 +69,6 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     }
   }
 
-  final List<String> _goals = [
-    'Buying car',
-    'Buy Stock',
-    'Buy Flat',
-    'Buy House',
-  ];
-
-  final List<String> _currencies = [
-    'SOL',
-    'USDC',
-    'USD',
-    'IDR',
-  ];
-
   final List<String> _paymentMethods = [
     'Via Wallet',
     'Via Bank Transfer',
@@ -91,6 +86,57 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     _amountController.addListener(() {
       setState(() {});
     });
+    // Fetch real data from backend
+    _loadUserGoals();
+    _loadSupportedCurrencies();
+  }
+
+  // Fetch user's goals from database
+  Future<void> _loadUserGoals() async {
+    final walletService = context.read<WalletService>();
+    if (walletService.walletAddress == null) {
+      setState(() => _isLoadingGoals = false);
+      return;
+    }
+
+    try {
+      final apiService = ApiService();
+      final response = await apiService.getUserGoals(walletService.walletAddress!);
+
+      if (response['success'] == true) {
+        final data = response['data'];
+        if (data != null && data['goals'] != null) {
+          setState(() {
+            _realGoals = List<Map<String, dynamic>>.from(data['goals']);
+            _isLoadingGoals = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading goals: $e');
+      setState(() => _isLoadingGoals = false);
+    }
+  }
+
+  // Fetch supported currencies with APY
+  Future<void> _loadSupportedCurrencies() async {
+    try {
+      final apiService = ApiService();
+      final response = await apiService.getSupportedCurrencies();
+
+      if (response['success'] == true) {
+        final data = response['data'];
+        if (data != null && data['currencies'] != null) {
+          setState(() {
+            _supportedCurrencies = List<Map<String, dynamic>>.from(data['currencies']);
+            _isLoadingCurrencies = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading currencies: $e');
+      setState(() => _isLoadingCurrencies = false);
+    }
   }
 
   @override
@@ -100,8 +146,9 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     super.dispose();
   }
 
-  void _proceed() {
-    if (_selectedGoal == null ||
+  Future<void> _proceed() async {
+    // Validation
+    if (_selectedGoalId == null ||
         _selectedCurrency == null ||
         _amountController.text.isEmpty ||
         _selectedPaymentMethod == null) {
@@ -115,21 +162,83 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
       return;
     }
 
-    // TODO: Process saving transaction
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saving \$${_amountController.text} to $_selectedGoal!'),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
       ),
     );
 
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        Navigator.pop(context);
-      }
-    });
+    try {
+      final apiService = ApiService();
+
+      // Call deposit API with real goalId
+      final result = await apiService.deposit(
+        goalId: _selectedGoalId!,
+        amount: _amountController.text.replaceAll(',', ''),
+      );
+
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show success dialog with transaction details
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('✅ Deposit Successful!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Amount: \$${_amountController.text}'),
+              const SizedBox(height: 12),
+              const Text(
+                'Transaction Hash:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              Text(
+                result['data']['txHash'] ?? 'N/A',
+                style: const TextStyle(fontSize: 10),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Your funds are now staked in Morpho v2 and earning yield!',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(); // Close dialog
+                Navigator.of(context).pop(true); // Return to home with refresh signal
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show error
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Deposit failed: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   @override
@@ -296,35 +405,37 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: _selectedGoal,
-                                hint: Text(
-                                  'Select the goals',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 14,
-                                    color: AppColors.grayText,
-                                  ),
-                                ),
-                                isExpanded: true,
-                                icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontSize: 14,
-                                  color: AppColors.black,
-                                ),
-                                items: _goals.map((goal) {
-                                  return DropdownMenuItem<String>(
-                                    value: goal,
-                                    child: Text(goal),
-                                  );
-                                }).toList(),
-                                onChanged: (String? newValue) {
-                                  setState(() {
-                                    _selectedGoal = newValue;
-                                  });
-                                },
-                              ),
+                              child: _isLoadingGoals
+                                  ? const Center(child: CircularProgressIndicator())
+                                  : DropdownButton<int>(
+                                      value: _selectedGoalId,
+                                      hint: Text(
+                                        _realGoals.isEmpty ? 'No goals available' : 'Select the goals',
+                                        style: TextStyle(
+                                          fontFamily: 'Poppins',
+                                          fontSize: 14,
+                                          color: AppColors.grayText,
+                                        ),
+                                      ),
+                                      isExpanded: true,
+                                      icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
+                                      style: const TextStyle(
+                                        fontFamily: 'Poppins',
+                                        fontSize: 14,
+                                        color: AppColors.black,
+                                      ),
+                                      items: _realGoals.map((goal) {
+                                        return DropdownMenuItem<int>(
+                                          value: goal['id'] as int,
+                                          child: Text(goal['name'] as String),
+                                        );
+                                      }).toList(),
+                                      onChanged: (int? newValue) {
+                                        setState(() {
+                                          _selectedGoalId = newValue;
+                                        });
+                                      },
+                                    ),
                             ),
                           ),
 
@@ -348,35 +459,49 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: _selectedCurrency,
-                                hint: Text(
-                                  'Select currency',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 14,
-                                    color: AppColors.grayText,
-                                  ),
-                                ),
-                                isExpanded: true,
-                                icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontSize: 14,
-                                  color: AppColors.black,
-                                ),
-                                items: _currencies.map((currency) {
-                                  return DropdownMenuItem<String>(
-                                    value: currency,
-                                    child: Text(currency),
-                                  );
-                                }).toList(),
-                                onChanged: (String? newValue) {
-                                  setState(() {
-                                    _selectedCurrency = newValue;
-                                  });
-                                },
-                              ),
+                              child: _isLoadingCurrencies
+                                  ? const Center(child: CircularProgressIndicator())
+                                  : DropdownButton<String>(
+                                      value: _selectedCurrency,
+                                      hint: Text(
+                                        _supportedCurrencies.isEmpty ? 'No currencies available' : 'Select currency',
+                                        style: TextStyle(
+                                          fontFamily: 'Poppins',
+                                          fontSize: 14,
+                                          color: AppColors.grayText,
+                                        ),
+                                      ),
+                                      isExpanded: true,
+                                      icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
+                                      style: const TextStyle(
+                                        fontFamily: 'Poppins',
+                                        fontSize: 14,
+                                        color: AppColors.black,
+                                      ),
+                                      items: _supportedCurrencies.map((currency) {
+                                        final address = currency['address'] as String;
+                                        // Map address to token symbol for display
+                                        String symbol = 'UNKNOWN';
+                                        if (address.toLowerCase() == '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48') {
+                                          symbol = 'USDC';
+                                        } else if (address.toLowerCase() == '0x6b175474e89094c44da98b954eedeac495271d0f') {
+                                          symbol = 'DAI';
+                                        } else if (address.toLowerCase() == '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2') {
+                                          symbol = 'WETH';
+                                        }
+                                        final liteAPY = currency['liteAPY'] ?? 0;
+                                        final proAPY = currency['proAPY'] ?? 0;
+                                        return DropdownMenuItem<String>(
+                                          value: address,
+                                          child: Text('$symbol (Lite: ${liteAPY}% | Pro: ${proAPY}%)'),
+                                        );
+                                      }).toList(),
+                                      onChanged: (String? newValue) {
+                                        setState(() {
+                                          _selectedCurrency = newValue;
+                                        });
+                                      },
+                                    ),
                             ),
                           ),
 

@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:reown_appkit/reown_appkit.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/services/wallet_service.dart';
-import 'package:stacksave/screens/add_goals_screen.dart';
+import 'package:stacksave/screens/main_navigation.dart';
 
 class LaunchBScreen extends StatefulWidget {
   const LaunchBScreen({super.key});
@@ -41,6 +41,19 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
       ),
     );
 
+    // Check if wallet is already connected (persisted session)
+    if (walletService.isConnected) {
+      // Navigate immediately to MainNavigation
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => const MainNavigation(),
+          ),
+        );
+      }
+      return; // Exit early, no need to set up callbacks
+    }
+
     // Setup callbacks
     walletService.onSessionConnect = () {
       if (!mounted) return;
@@ -55,12 +68,12 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
         ),
       );
 
-      // Navigate to Add Goals screen
+      // Navigate to Main Navigation (HomeScreen)
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (context) => const AddGoalsScreen(),
+              builder: (context) => const MainNavigation(),
             ),
           );
         }

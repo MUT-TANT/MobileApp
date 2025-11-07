@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:stacksave/constants/colors.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/services/wallet_service.dart';
+import 'package:stacksave/models/goal_model.dart';
 import 'dart:math' as math;
 
 class PortfolioScreen extends StatefulWidget {
@@ -15,13 +19,44 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
   final ScrollController _scrollController = ScrollController();
   double _scrollOffset = 0.0;
 
-  // Portfolio data
-  final double totalBalance = 7783.00;
-  final double totalProfit = 23.0; // percentage
-  final double goalProgress = 0.2; // 20%
-  final double goalTarget = 20000.00;
-  final double averageAPY = 67.0;
-  final double totalEarnings = 1187.40;
+  // Real data from blockchain
+  List<GoalModel> _goals = [];
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  // Calculated portfolio data
+  double get totalBalance {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.currentValueDouble);
+  }
+
+  double get totalDeposited {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.depositedAmountDouble);
+  }
+
+  double get totalEarnings {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.yieldEarnedDouble);
+  }
+
+  double get totalProfit {
+    if (totalDeposited == 0) return 0.0;
+    return ((totalEarnings / totalDeposited) * 100);
+  }
+
+  double get goalProgress {
+    if (_goals.isEmpty) return 0.0;
+    final totalTarget = _goals.fold(0.0, (sum, goal) => sum + goal.targetAmountDouble);
+    if (totalTarget == 0) return 0.0;
+    return (totalDeposited / totalTarget).clamp(0.0, 1.0);
+  }
+
+  double get goalTarget {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.targetAmountDouble);
+  }
+
+  double get averageAPY {
+    // Mock APY for now - could be calculated from actual yield over time
+    return 6.5;
+  }
 
   // Weekly earnings data
   final List<Map<String, dynamic>> weeklyEarnings = [
@@ -114,6 +149,46 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         _scrollOffset = _scrollController.offset;
       });
     });
+
+    // Load goals from API - defer until after first frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadGoals();
+    });
+  }
+
+  Future<void> _loadGoals() async {
+    final walletService = context.read<WalletService>();
+
+    if (!walletService.isConnected || walletService.walletAddress == null) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Please connect your wallet';
+      });
+      return;
+    }
+
+    try {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      final apiService = ApiService();
+      final response = await apiService.getUserGoals(walletService.walletAddress!);
+
+      final goalsData = response['goals'] as List;
+      final goals = goalsData.map((json) => GoalModel.fromJson(json)).toList();
+
+      setState(() {
+        _goals = goals;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Failed to load goals: ${e.toString()}';
+      });
+    }
   }
 
   @override

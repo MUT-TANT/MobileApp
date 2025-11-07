@@ -8,6 +8,8 @@ import 'package:stacksave/screens/portfolio_screen.dart';
 import 'package:stacksave/screens/profile_screen.dart';
 import 'package:stacksave/screens/withdraw_screen.dart';
 import 'package:stacksave/services/wallet_service.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/models/goal_model.dart';
 
 class HomeScreen extends StatefulWidget {
   final bool showNavBar;
@@ -24,6 +26,10 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   bool _showSpeedDial = false;
   double _scrollOffset = 0.0;
 
+  // Goals data
+  List<GoalModel> _goals = [];
+  bool _isLoadingGoals = true;
+
   @override
   void initState() {
     super.initState();
@@ -39,6 +45,74 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         _scrollOffset = _scrollController.offset;
       });
     });
+
+    // Load goals from API - defer until after first frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadGoals();
+    });
+  }
+
+  // Public method to refresh goals (can be called externally)
+  Future<void> refreshGoals() async {
+    await _loadGoals();
+  }
+
+  Future<void> _loadGoals() async {
+    final walletService = context.read<WalletService>();
+
+    // DEBUG: Print wallet info
+    print('🔍 DEBUG: Loading goals...');
+    print('🔍 DEBUG: Wallet connected: ${walletService.isConnected}');
+    print('🔍 DEBUG: Wallet address: ${walletService.walletAddress}');
+
+    if (!walletService.isConnected || walletService.walletAddress == null) {
+      print('❌ DEBUG: Skipping API call - wallet not connected or address is null');
+      setState(() {
+        _isLoadingGoals = false;
+      });
+      return;
+    }
+
+    try {
+      final apiService = ApiService();
+      print('📡 DEBUG: Calling API with address: ${walletService.walletAddress}');
+      final response = await apiService.getUserGoals(walletService.walletAddress!);
+
+      print('✅ DEBUG: API Response: $response');
+
+      if (response['success'] == true) {
+        final data = response['data'];
+        if (data != null && data['goals'] != null) {
+          final goalsData = data['goals'] as List;
+          final goals = goalsData.map((json) => GoalModel.fromJson(json)).toList();
+
+          print('DEBUG: Loaded ${goals.length} goals');
+
+          setState(() {
+            _goals = goals;
+            _isLoadingGoals = false;
+          });
+        } else {
+          print('DEBUG: No goals data in response');
+          setState(() {
+            _goals = [];
+            _isLoadingGoals = false;
+          });
+        }
+      } else {
+        print('DEBUG: Response success is false');
+        setState(() {
+          _goals = [];
+          _isLoadingGoals = false;
+        });
+      }
+    } catch (e) {
+      print('ERROR loading goals: $e');
+      setState(() {
+        _goals = [];
+        _isLoadingGoals = false;
+      });
+    }
   }
 
   @override
@@ -141,9 +215,9 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                                 },
                               ),
                               const SizedBox(width: 12),
-                              const Text(
-                                '20 Days Streak',
-                                style: TextStyle(
+                              Text(
+                                '${(_goals.isNotEmpty && !_isLoadingGoals) ? _goals[0].currentStreak : 0} Days Streak',
+                                style: const TextStyle(
                                   fontFamily: 'Poppins',
                                   fontSize: 28,
                                   fontWeight: FontWeight.bold,
@@ -156,15 +230,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           // Week Days
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              _buildDayIndicator('Su', true),
-                              _buildDayIndicator('M', true),
-                              _buildDayIndicator('Tu', false),
-                              _buildDayIndicator('W', false),
-                              _buildDayIndicator('Th', false),
-                              _buildDayIndicator('F', false),
-                              _buildDayIndicator('Sa', false),
-                            ],
+                            children: _buildWeekDayIndicators(),
                           ),
                         ],
                       ),
@@ -188,9 +254,6 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                 // White Card Content
                 SliverToBoxAdapter(
                   child: Container(
-                    constraints: BoxConstraints(
-                      minHeight: MediaQuery.of(context).size.height - 80,
-                    ),
                     decoration: BoxDecoration(
                       color: AppColors.lightBackground,
                       borderRadius: BorderRadius.only(
@@ -203,150 +266,198 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Main Goal Card
-                          Container(
-                            padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary,
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            child: Column(
-                              children: [
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Car Icon with Progress
-                                    Column(
-                                      children: [
-                                        Stack(
-                                          alignment: Alignment.center,
+                          // Main Goal Card or Empty State
+                          if (_isLoadingGoals)
+                            Container(
+                              padding: const EdgeInsets.all(40),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: const Center(
+                                child: CircularProgressIndicator(
+                                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                ),
+                              ),
+                            )
+                          else if (_goals.isEmpty)
+                            Container(
+                              padding: const EdgeInsets.all(40),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Column(
+                                children: const [
+                                  Icon(Icons.flag_outlined, color: Colors.white, size: 48),
+                                  SizedBox(height: 16),
+                                  Text(
+                                    'No Goals Yet',
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  SizedBox(height: 8),
+                                  Text(
+                                    'Create your first savings goal!',
+                                    style: TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 14,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          else
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Column(
+                                children: [
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      // Icon with Progress
+                                      Column(
+                                        children: [
+                                          Stack(
+                                            alignment: Alignment.center,
+                                            children: [
+                                              // Progress Circle
+                                              SizedBox(
+                                                width: 90,
+                                                height: 90,
+                                                child: CircularProgressIndicator(
+                                                  value: _goals[0].progress,
+                                                  strokeWidth: 6,
+                                                  backgroundColor: Colors.white.withOpacity(0.2),
+                                                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                                ),
+                                              ),
+                                              // Icon
+                                              Container(
+                                                width: 70,
+                                                height: 70,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.white.withOpacity(0.2),
+                                                  shape: BoxShape.circle,
+                                                ),
+                                                child: const Center(
+                                                  child: Icon(
+                                                    Icons.savings_outlined,
+                                                    color: Colors.white,
+                                                    size: 32,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: 8),
+                                          Text(
+                                            _goals[0].name,
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontFamily: 'Poppins',
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(width: 16),
+                                      // Divider
+                                      Container(
+                                        width: 1,
+                                        height: 100,
+                                        color: Colors.white.withOpacity(0.3),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      // Savings Info
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
-                                            // Progress Circle
-                                            SizedBox(
-                                              width: 90,
-                                              height: 90,
-                                              child: CircularProgressIndicator(
-                                                value: 0.4, // 40% progress (4000/10000)
-                                                strokeWidth: 6,
-                                                backgroundColor: Colors.white.withOpacity(0.2),
-                                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                                            Row(
+                                              children: const [
+                                                Icon(
+                                                  Icons.account_balance_wallet,
+                                                  color: Colors.white,
+                                                  size: 14,
+                                                ),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  'Total saving',
+                                                  style: TextStyle(
+                                                    fontFamily: 'Poppins',
+                                                    fontSize: 10,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '\$${_goals[0].depositedAmountDouble.toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                fontFamily: 'Poppins',
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
                                               ),
                                             ),
-                                            // Car Icon
-                                            Container(
-                                              width: 70,
-                                              height: 70,
-                                              decoration: BoxDecoration(
-                                                color: Colors.white.withOpacity(0.2),
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: Center(
-                                                child: Image.asset(
-                                                  'design/Car.png',
-                                                  width: 40,
-                                                  height: 40,
+                                            const SizedBox(height: 12),
+                                            Row(
+                                              children: const [
+                                                Icon(
+                                                  Icons.flag_outlined,
+                                                  color: Colors.white,
+                                                  size: 14,
                                                 ),
+                                                SizedBox(width: 4),
+                                                Text(
+                                                  'Target',
+                                                  style: TextStyle(
+                                                    fontFamily: 'Poppins',
+                                                    fontSize: 10,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '\$${_goals[0].targetAmountDouble.toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                fontFamily: 'Poppins',
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
                                               ),
                                             ),
                                           ],
                                         ),
-                                        const SizedBox(height: 8),
-                                        const Text(
-                                          'Buying car',
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                            fontFamily: 'Poppins',
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(width: 16),
-                                    // Divider
-                                    Container(
-                                      width: 1,
-                                      height: 100,
-                                      color: Colors.white.withOpacity(0.3),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    // Savings Info
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                Icons.account_balance_wallet,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              const Text(
-                                                'Total saving',
-                                                style: TextStyle(
-                                                  fontFamily: 'Poppins',
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          const Text(
-                                            '\$4,000.00',
-                                            style: TextStyle(
-                                              fontFamily: 'Poppins',
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 12),
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                Icons.flag_outlined,
-                                                color: Colors.white,
-                                                size: 14,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              const Text(
-                                                'Target',
-                                                style: TextStyle(
-                                                  fontFamily: 'Poppins',
-                                                  fontSize: 10,
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 4),
-                                          const Text(
-                                            '\$10,000.00',
-                                            style: TextStyle(
-                                              fontFamily: 'Poppins',
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ],
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
 
                           const SizedBox(height: 24),
 
-                          // Other Goals
-                          const Text(
+                          // Other Goals - Show if there are more than 1 goal
+                          if (_goals.length > 1) const Text(
                             'Other Goals',
                             style: TextStyle(
                               fontFamily: 'Poppins',
@@ -355,33 +466,25 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                               color: AppColors.black,
                             ),
                           ),
+                          if (_goals.length > 1) const SizedBox(height: 16),
 
-                          const SizedBox(height: 16),
-
-                          // Goal Items
-                          _buildGoalItem(
-                            icon: 'design/Group.png',
-                            title: 'Buy Stock',
-                            progress: 0.8, // 80% complete
-                            saved: '\$8,000.00',
-                            target: '\$10,000.00',
-                          ),
-                          const SizedBox(height: 12),
-                          _buildGoalItem(
-                            icon: 'design/Salary.png',
-                            title: 'Buy Flat',
-                            progress: 0.5, // 50% complete
-                            saved: '\$50,000.00',
-                            target: '\$100,000.00',
-                          ),
-                          const SizedBox(height: 12),
-                          _buildGoalItem(
-                            icon: 'design/Group.png',
-                            title: 'Buy House',
-                            progress: 0.2, // 20% complete
-                            saved: '\$40,000.00',
-                            target: '\$200,000.00',
-                          ),
+                          // Display remaining goals using List.generate instead of nested spreads
+                          ...List.generate(_goals.length > 1 ? _goals.length - 1 : 0, (index) {
+                            final i = index + 1;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Container(
+                                key: ValueKey('goal_${_goals[i].id}'),
+                                child: _buildGoalItem(
+                                  icon: 'design/Group.png',
+                                  title: _goals[i].name,
+                                  progress: _goals[i].progress,
+                                  saved: '\$${_goals[i].depositedAmountDouble.toStringAsFixed(2)}',
+                                  target: '\$${_goals[i].targetAmountDouble.toStringAsFixed(2)}',
+                                ),
+                              ),
+                            );
+                          }),
 
                           const SizedBox(height: 32),
 
@@ -430,32 +533,53 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     _buildSpeedDialOption(
                       label: 'Add Goals',
                       icon: Icons.flag,
-                      onTap: () {
+                      onTap: () async {
                         setState(() {
                           _showSpeedDial = false;
                         });
-                        Navigator.push(
+                        // Navigate and wait for result
+                        final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const AddGoalsScreen(),
                           ),
                         );
+                        // If goal was created successfully, refresh the list
+                        if (result == true) {
+                          setState(() {
+                            _goals = []; // Clear stale data to prevent accessing old goals
+                            _isLoadingGoals = true;
+                          });
+                          // Add delay to allow database transaction to commit
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          await _loadGoals();
+                        }
                       },
                     ),
                     const SizedBox(height: 12),
                     _buildSpeedDialOption(
                       label: 'Add Saving',
                       icon: Icons.account_balance_wallet,
-                      onTap: () {
+                      onTap: () async {
                         setState(() {
                           _showSpeedDial = false;
                         });
-                        Navigator.push(
+                        // Navigate and wait for result
+                        final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const AddSavingScreen(),
                           ),
                         );
+                        // Refresh goals if deposit was successful
+                        if (result == true) {
+                          setState(() {
+                            _goals = [];
+                            _isLoadingGoals = true;
+                          });
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          await _loadGoals();
+                        }
                       },
                     ),
                     const SizedBox(height: 12),
@@ -526,13 +650,23 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                           ),
                         );
                       }),
-                      _buildNavItem(Icons.layers, false, () {
-                        Navigator.push(
+                      _buildNavItem(Icons.layers, false, () async {
+                        // Navigate and wait for result
+                        final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const AddSavingScreen(),
                           ),
                         );
+                        // Refresh goals if deposit was successful
+                        if (result == true) {
+                          setState(() {
+                            _goals = [];
+                            _isLoadingGoals = true;
+                          });
+                          await Future.delayed(const Duration(milliseconds: 500));
+                          await _loadGoals();
+                        }
                       }),
                       _buildNavItem(Icons.swap_horiz, false, () {
                         Navigator.push(
@@ -589,6 +723,34 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ),
       ],
     );
+  }
+
+  List<Widget> _buildWeekDayIndicators() {
+    const weekDays = ['Su', 'M', 'Tu', 'W', 'Th', 'F', 'Sa'];
+
+    // Show all unchecked if no goals OR currently loading
+    if (_goals.isEmpty || _isLoadingGoals) {
+      return weekDays.map((day) => _buildDayIndicator(day, false)).toList();
+    }
+
+    final now = DateTime.now();
+    final today = now.weekday % 7; // Sunday = 0
+
+    return List.generate(7, (index) {
+      // Calculate the date for this day of the week
+      final dayOffset = index - today;
+      final dayDate = now.add(Duration(days: dayOffset));
+      final dayDateMidnight = DateTime(dayDate.year, dayDate.month, dayDate.day);
+
+      // Check if there's a save for this day
+      final hasSaved = _goals[0].dailySaves.any((save) {
+        final saveDate = DateTime.fromMillisecondsSinceEpoch(save.date);
+        final saveDateMidnight = DateTime(saveDate.year, saveDate.month, saveDate.day);
+        return saveDateMidnight.isAtSameMomentAs(dayDateMidnight);
+      });
+
+      return _buildDayIndicator(weekDays[index], hasSaved);
+    });
   }
 
   Widget _buildGoalItem({
@@ -654,6 +816,8 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                     fontWeight: FontWeight.w600,
                     color: AppColors.black,
                   ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
                 ),
                 const SizedBox(height: 4),
                 Row(
@@ -666,6 +830,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         fontWeight: FontWeight.w600,
                         color: color,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       ' / $target',
@@ -674,6 +839,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         fontSize: 13,
                         color: AppColors.grayText,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -870,54 +1036,67 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
               );
 
               try {
-                // Simulate faucet claim (for testing)
-                // In production, this would call your backend API to claim tokens
-                await Future.delayed(const Duration(milliseconds: 800));
+                // Call backend API to claim faucet tokens
+                final apiService = ApiService();
 
-                // Mock transaction signature
-                final signature = 'faucet_claim_${DateTime.now().millisecondsSinceEpoch}';
+                // USDC token address on mainnet
+                const usdcAddress = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+
+                final result = await apiService.claimFaucet(
+                  tokenAddress: usdcAddress,
+                );
 
                 // Close loading dialog
                 if (!mounted) return;
                 // ignore: use_build_context_synchronously
                 Navigator.pop(context);
 
-                // Show success
+                // Show success with real transaction data
                 if (!mounted) return;
                 // ignore: use_build_context_synchronously
                 showDialog(
                   context: context,
                   builder: (dialogContext) => AlertDialog(
-                    title: const Text('Success!'),
+                    title: const Text('🎉 Success!'),
                     content: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('You received $amount USDC!'),
+                        Text('You claimed $amount USDC!'),
                         const SizedBox(height: 8),
                         Text(
-                          'Connected Wallet: ${walletService.shortenedAddress}',
+                          'Wallet: ${walletService.shortenedAddress}',
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.grey,
                           ),
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 12),
                         const Text(
-                          'Transaction ID:',
+                          'Transaction Hash:',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 12,
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          signature,
+                        SelectableText(
+                          result['txHash'] ?? 'N/A',
                           style: const TextStyle(
                             fontSize: 10,
                             fontFamily: 'monospace',
                           ),
                         ),
+                        const SizedBox(height: 12),
+                        if (result['explorer'] != null)
+                          TextButton.icon(
+                            onPressed: () {
+                              // TODO: Open explorer link in browser
+                              print('Open: ${result['explorer']}');
+                            },
+                            icon: const Icon(Icons.open_in_new, size: 16),
+                            label: const Text('View on Explorer'),
+                          ),
                       ],
                     ),
                     actions: [

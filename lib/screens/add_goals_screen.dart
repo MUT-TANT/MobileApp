@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/screens/main_navigation.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/services/wallet_service.dart';
 
 class AddGoalsScreen extends StatefulWidget {
   const AddGoalsScreen({super.key});
@@ -46,7 +49,8 @@ class _AddGoalsScreenState extends State<AddGoalsScreen> {
     super.dispose();
   }
 
-  void _saveGoal() {
+  Future<void> _saveGoal() async {
+    // Validation
     if (_goalNameController.text.isEmpty ||
         _selectedCurrency == null ||
         _targetAmountController.text.isEmpty ||
@@ -61,16 +65,124 @@ class _AddGoalsScreenState extends State<AddGoalsScreen> {
       return;
     }
 
-    // TODO: Save goal to state management or backend
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Goal "${_goalNameController.text}" saved!'),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+    final walletService = context.read<WalletService>();
+    if (!walletService.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please connect your wallet first'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
       ),
     );
 
+    try {
+      final walletService = context.read<WalletService>();
+      final apiService = ApiService();
+
+      // Map currency to token address
+      const currencyAddresses = {
+        'USDC': '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        'DAI': '0x6B175474E89094C44Da98b954EedeAC495271d0F',
+        'WETH': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      };
+
+      final currencyAddress = currencyAddresses[_selectedCurrency] ??
+          currencyAddresses['USDC']!;
+
+      // Parse timeframe to days
+      final durationInDays = int.tryParse(_timeFrameController.text) ?? 90;
+
+      // Create goal via API
+      print('📝 DEBUG: Creating goal with address: ${walletService.walletAddress}');
+      final result = await apiService.createGoal(
+        name: _goalNameController.text,
+        owner: walletService.walletAddress ?? '0x0000000000000000000000000000000000000000',
+        currency: currencyAddress,
+        mode: 0, // 0 = Lite Mode, 1 = Pro Mode
+        targetAmount: _targetAmountController.text,
+        durationInDays: durationInDays,
+        donationPercentage: 500, // 5% donation
+      );
+      print('✅ DEBUG: Goal created: $result');
+
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show success dialog
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false, // Force user to click OK button
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('🎉 Goal Created!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Goal "${_goalNameController.text}" has been created successfully!'),
+              const SizedBox(height: 12),
+              Text(
+                'Goal ID: ${result['data']?['goalId'] ?? 'N/A'}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Target: \$${_targetAmountController.text}',
+                style: const TextStyle(fontSize: 13),
+              ),
+              Text(
+                'Duration: ${_timeFrameController.text} days',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                // Close dialog using dialog's context
+                Navigator.of(dialogContext).pop();
+                // Navigate back and signal success to refresh goals
+                Navigator.of(context).pop(true); // Return true to indicate success
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show error
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create goal: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
+  }
+
+  void _oldSaveGoal() {
     // Navigate to Main Navigation (Home screen)
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {

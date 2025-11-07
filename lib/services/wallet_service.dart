@@ -11,9 +11,23 @@ class WalletService extends ChangeNotifier {
   bool get isConnected => _appKitModal?.isConnected ?? false;
 
   String? get walletAddress {
-    // Get address for the currently selected chain, or default to Ethereum mainnet (1)
-    final chainId = _appKitModal?.selectedChain?.chainId ?? '1';
-    return _appKitModal?.session?.getAddress(chainId);
+    if (_appKitModal?.session == null) return null;
+
+    // Get all accounts from the session
+    final accounts = _appKitModal?.session?.getAccounts();
+
+    if (accounts == null || accounts.isEmpty) return null;
+
+    // Accounts are in format "eip155:1:0xABCD..."
+    // Extract the address part (after the second colon)
+    final firstAccount = accounts.first;
+    final parts = firstAccount.split(':');
+
+    if (parts.length >= 3) {
+      return parts[2]; // Return the 0x... address
+    }
+
+    return null;
   }
 
   String get shortenedAddress {
