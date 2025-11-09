@@ -47,6 +47,18 @@ dependencies:
   # Image picker for profile photo
   image_picker: ^1.0.7
 
+  # HTTP client
+  dio: ^5.4.0
+
+  # Environment variables
+  flutter_dotenv: ^5.1.0
+
+  # Visibility detection for tab refresh
+  visibility_detector: ^0.4.0+2
+
+  # Web3 for transaction signing
+  web3dart: ^2.7.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -77,6 +89,7 @@ flutter:
     - design/Car.png
     - design/Salary.png
     - design/Group.png
+    - .env
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

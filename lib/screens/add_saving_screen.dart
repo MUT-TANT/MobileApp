@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:stacksave/constants/colors.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/services/wallet_service.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:web3dart/web3dart.dart';
 
 class AddSavingScreen extends StatefulWidget {
   final bool showNavBar;
@@ -18,12 +24,19 @@ class AddSavingScreen extends StatefulWidget {
 class _AddSavingScreenState extends State<AddSavingScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _amountController = TextEditingController();
+  final TextEditingController _walletAddressController = TextEditingController();
+  final TextEditingController _cardNumberController = TextEditingController();
+  final TextEditingController _cvcController = TextEditingController();
+  final TextEditingController _expiryController = TextEditingController();
 
   double _scrollOffset = 0.0;
   String _savingMode = 'Lite Mode'; // 'Lite Mode' or 'Pro Mode'
-  String? _selectedGoal;
-  String? _selectedCurrency;
+  int? _selectedGoalId; // Changed to int goalId
   String? _selectedPaymentMethod;
+
+  // Real-time data from backend
+  List<Map<String, dynamic>> _realGoals = [];
+  bool _isLoadingGoals = true;
 
   // Get mode info
   Map<String, dynamic> get _modeInfo {
@@ -60,23 +73,17 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     }
   }
 
-  final List<String> _goals = [
-    'Buying car',
-    'Buy Stock',
-    'Buy Flat',
-    'Buy House',
-  ];
-
-  final List<String> _currencies = [
-    'SOL',
-    'USDC',
-    'USD',
-    'IDR',
-  ];
-
-  final List<String> _paymentMethods = [
-    'Via Wallet',
-    'Via Bank Transfer',
+  final List<Map<String, dynamic>> _paymentMethods = [
+    {
+      'name': 'Wallet',
+      'icon': Icons.account_balance_wallet,
+      'description': 'Connect your crypto wallet',
+    },
+    {
+      'name': 'Mastercard',
+      'icon': Icons.credit_card,
+      'description': 'Pay with your credit card',
+    },
   ];
 
   @override
@@ -91,18 +98,67 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     _amountController.addListener(() {
       setState(() {});
     });
+    // Fetch real data from backend
+    _loadUserGoals();
+  }
+
+  // Fetch user's goals from database
+  Future<void> _loadUserGoals() async {
+    final walletService = context.read<WalletService>();
+
+    print('🔍 AddSaving: Loading goals...');
+    print('🔍 AddSaving: Wallet address: ${walletService.walletAddress}');
+
+    if (walletService.walletAddress == null) {
+      print('❌ AddSaving: Wallet address is null');
+      setState(() => _isLoadingGoals = false);
+      return;
+    }
+
+    try {
+      final apiService = ApiService();
+      print('📡 AddSaving: Calling API with address: ${walletService.walletAddress}');
+      final response = await apiService.getUserGoals(walletService.walletAddress!);
+
+      print('✅ AddSaving: API Response: $response');
+
+      if (response['success'] == true) {
+        final data = response['data'];
+        if (data != null && data['goals'] != null) {
+          final goalsList = List<Map<String, dynamic>>.from(data['goals']);
+          print('✅ AddSaving: Found ${goalsList.length} goals');
+          setState(() {
+            _realGoals = goalsList;
+            _isLoadingGoals = false;
+          });
+        } else {
+          print('⚠️ AddSaving: No goals data in response');
+          setState(() => _isLoadingGoals = false);
+        }
+      } else {
+        print('⚠️ AddSaving: API returned success=false');
+        setState(() => _isLoadingGoals = false);
+      }
+    } catch (e) {
+      print('❌ AddSaving Error loading goals: $e');
+      setState(() => _isLoadingGoals = false);
+    }
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
     _amountController.dispose();
+    _walletAddressController.dispose();
+    _cardNumberController.dispose();
+    _cvcController.dispose();
+    _expiryController.dispose();
     super.dispose();
   }
 
-  void _proceed() {
-    if (_selectedGoal == null ||
-        _selectedCurrency == null ||
+  Future<void> _proceed() async {
+    // Validation
+    if (_selectedGoalId == null ||
         _amountController.text.isEmpty ||
         _selectedPaymentMethod == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -115,21 +171,129 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
       return;
     }
 
-    // TODO: Process saving transaction
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saving \$${_amountController.text} to $_selectedGoal!'),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+    final walletService = context.read<WalletService>();
+
+    if (!walletService.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please connect your wallet first'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
       ),
     );
 
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        Navigator.pop(context);
-      }
-    });
+    try {
+      // Get contract addresses from .env
+      final stackSaveAddress = dotenv.env['STACKSAVE_CONTRACT']!;
+      final daiAddress = dotenv.env['DAI_ADDRESS']!;
+
+      // Convert amount to wei (DAI has 18 decimals)
+      final amount = double.parse(_amountController.text.replaceAll(',', ''));
+      final amountWei = BigInt.from(amount * 1e18);
+
+      print('💰 Depositing: $amount DAI = $amountWei wei');
+      print('📍 StackSave: $stackSaveAddress');
+      print('📍 DAI: $daiAddress');
+      print('🎯 Goal ID: $_selectedGoalId');
+
+      // Step 1: Approve StackSave to spend DAI
+      print('✍️ Requesting approval...');
+      final approveTxHash = await walletService.approveToken(
+        tokenAddress: daiAddress,
+        spenderAddress: stackSaveAddress,
+        amount: amountWei,
+      );
+      print('✅ Approval TX: $approveTxHash');
+
+      // Wait a bit for approval to be mined
+      await Future.delayed(const Duration(seconds: 2));
+
+      // Step 2: Call deposit on StackSave contract
+      print('✍️ Calling deposit...');
+      final depositTxHash = await walletService.contractCall(
+        contractAddress: stackSaveAddress,
+        functionName: 'deposit',
+        params: [
+          BigInt.from(_selectedGoalId!),
+          amountWei,
+        ],
+        functionParams: [
+          FunctionParameter('goalId', UintType()),
+          FunctionParameter('amount', UintType()),
+        ],
+      );
+      print('✅ Deposit TX: $depositTxHash');
+
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show success dialog with transaction details
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('✅ Deposit Successful!'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Amount: \$${_amountController.text}'),
+              const SizedBox(height: 12),
+              const Text(
+                'Transaction Hash:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+              ),
+              Text(
+                depositTxHash,
+                style: const TextStyle(fontSize: 10),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Your funds are now staked in Morpho v2 and earning yield!',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(); // Close dialog
+                Navigator.of(context).pop(true); // Return to home with refresh signal
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      // Close loading dialog
+      if (!mounted) return;
+      Navigator.pop(context);
+
+      // Show error
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Deposit failed: ${e.toString()}'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   @override
@@ -142,9 +306,17 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.primary,
-      body: SafeArea(
-        child: Stack(
-          children: [
+      body: VisibilityDetector(
+        key: const Key('add-saving-screen'),
+        onVisibilityChanged: (info) {
+          // Reload goals when screen becomes visible (>50% visible)
+          if (info.visibleFraction > 0.5 && mounted) {
+            _loadUserGoals();
+          }
+        },
+        child: SafeArea(
+          child: Stack(
+            children: [
             // Header (will fade out on scroll)
             Positioned(
               top: headerTranslateY,
@@ -170,9 +342,11 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
             ),
 
             // Form Container (scrollable white card)
-            CustomScrollView(
-              controller: _scrollController,
-              slivers: [
+            RefreshIndicator(
+              onRefresh: _loadUserGoals,
+              child: CustomScrollView(
+                controller: _scrollController,
+                slivers: [
                 // Space for header
                 SliverToBoxAdapter(
                   child: SizedBox(height: maxHeaderHeight),
@@ -296,87 +470,37 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: _selectedGoal,
-                                hint: Text(
-                                  'Select the goals',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 14,
-                                    color: AppColors.grayText,
-                                  ),
-                                ),
-                                isExpanded: true,
-                                icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontSize: 14,
-                                  color: AppColors.black,
-                                ),
-                                items: _goals.map((goal) {
-                                  return DropdownMenuItem<String>(
-                                    value: goal,
-                                    child: Text(goal),
-                                  );
-                                }).toList(),
-                                onChanged: (String? newValue) {
-                                  setState(() {
-                                    _selectedGoal = newValue;
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-
-                          const SizedBox(height: 20),
-
-                          // Currency
-                          const Text(
-                            'Currency',
-                            style: TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.black,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE8F5E9),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: _selectedCurrency,
-                                hint: Text(
-                                  'Select currency',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 14,
-                                    color: AppColors.grayText,
-                                  ),
-                                ),
-                                isExpanded: true,
-                                icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontSize: 14,
-                                  color: AppColors.black,
-                                ),
-                                items: _currencies.map((currency) {
-                                  return DropdownMenuItem<String>(
-                                    value: currency,
-                                    child: Text(currency),
-                                  );
-                                }).toList(),
-                                onChanged: (String? newValue) {
-                                  setState(() {
-                                    _selectedCurrency = newValue;
-                                  });
-                                },
-                              ),
+                              child: _isLoadingGoals
+                                  ? const Center(child: CircularProgressIndicator())
+                                  : DropdownButton<int>(
+                                      value: _selectedGoalId,
+                                      hint: Text(
+                                        _realGoals.isEmpty ? 'No goals available' : 'Select the goals',
+                                        style: TextStyle(
+                                          fontFamily: 'Poppins',
+                                          fontSize: 14,
+                                          color: AppColors.grayText,
+                                        ),
+                                      ),
+                                      isExpanded: true,
+                                      icon: const Icon(Icons.keyboard_arrow_down, color: AppColors.primary),
+                                      style: const TextStyle(
+                                        fontFamily: 'Poppins',
+                                        fontSize: 14,
+                                        color: AppColors.black,
+                                      ),
+                                      items: _realGoals.map((goal) {
+                                        return DropdownMenuItem<int>(
+                                          value: goal['id'] as int,
+                                          child: Text(goal['name'] as String),
+                                        );
+                                      }).toList(),
+                                      onChanged: (int? newValue) {
+                                        setState(() {
+                                          _selectedGoalId = newValue;
+                                        });
+                                      },
+                                    ),
                             ),
                           ),
 
@@ -534,45 +658,270 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
 
                           // Payment Method Options
                           ..._paymentMethods.map((method) {
+                            final isSelected = _selectedPaymentMethod == method['name'];
                             return Padding(
                               padding: const EdgeInsets.only(bottom: 12),
                               child: GestureDetector(
                                 onTap: () {
                                   setState(() {
-                                    _selectedPaymentMethod = method;
+                                    _selectedPaymentMethod = method['name'];
                                   });
                                 },
                                 child: Container(
                                   padding: const EdgeInsets.all(16),
                                   decoration: BoxDecoration(
-                                    color: _selectedPaymentMethod == method
-                                        ? AppColors.primary.withOpacity(0.1)
-                                        : const Color(0xFFE8F5E9),
-                                    borderRadius: BorderRadius.circular(12),
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
                                     border: Border.all(
-                                      color: _selectedPaymentMethod == method
+                                      color: isSelected
                                           ? AppColors.primary
                                           : Colors.transparent,
                                       width: 2,
                                     ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: isSelected
+                                            ? AppColors.primary.withOpacity(0.2)
+                                            : Colors.black.withOpacity(0.05),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
                                   ),
-                                  child: Text(
-                                    method,
-                                    style: TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 14,
-                                      fontWeight: _selectedPaymentMethod == method
-                                          ? FontWeight.w600
-                                          : FontWeight.w500,
-                                      color: _selectedPaymentMethod == method
-                                          ? AppColors.primary
-                                          : AppColors.black,
-                                    ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 48,
+                                        height: 48,
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? AppColors.primary.withOpacity(0.1)
+                                              : const Color(0xFFE8F5E9),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Icon(
+                                          method['icon'],
+                                          color: isSelected
+                                              ? AppColors.primary
+                                              : AppColors.grayText,
+                                          size: 24,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              method['name'],
+                                              style: TextStyle(
+                                                fontFamily: 'Poppins',
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: isSelected
+                                                    ? AppColors.primary
+                                                    : AppColors.black,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              method['description'],
+                                              style: TextStyle(
+                                                fontFamily: 'Poppins',
+                                                fontSize: 12,
+                                                color: AppColors.grayText,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      if (isSelected)
+                                        Icon(
+                                          Icons.check_circle,
+                                          color: AppColors.primary,
+                                          size: 24,
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ),
                             );
-                          }),
+                          }).toList(),
+
+                          // Dynamic Payment Form Fields
+                          if (_selectedPaymentMethod != null) ...[
+                            const SizedBox(height: 16),
+                            if (_selectedPaymentMethod == 'Wallet') ...[
+                              const Text(
+                                'Wallet Address',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.black,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _walletAddressController,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  color: AppColors.black,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: '0x742d35Cc6634C0532925a3b...',
+                                  hintStyle: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 14,
+                                    color: AppColors.black.withOpacity(0.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFFE8F5E9),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 16,
+                                  ),
+                                ),
+                              ),
+                            ] else if (_selectedPaymentMethod == 'Mastercard') ...[
+                              const Text(
+                                'Card Number',
+                                style: TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.black,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              TextField(
+                                controller: _cardNumberController,
+                                keyboardType: TextInputType.number,
+                                style: const TextStyle(
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14,
+                                  color: AppColors.black,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: '1234 5678 9012 3456',
+                                  hintStyle: TextStyle(
+                                    fontFamily: 'Poppins',
+                                    fontSize: 14,
+                                    color: AppColors.black.withOpacity(0.5),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFFE8F5E9),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 16,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Expiry Date',
+                                          style: TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.black,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextField(
+                                          controller: _expiryController,
+                                          keyboardType: TextInputType.datetime,
+                                          style: const TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 14,
+                                            color: AppColors.black,
+                                          ),
+                                          decoration: InputDecoration(
+                                            hintText: 'MM/YY',
+                                            hintStyle: TextStyle(
+                                              fontFamily: 'Poppins',
+                                              fontSize: 14,
+                                              color: AppColors.black.withOpacity(0.5),
+                                            ),
+                                            filled: true,
+                                            fillColor: const Color(0xFFE8F5E9),
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(12),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'CVC',
+                                          style: TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.black,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        TextField(
+                                          controller: _cvcController,
+                                          keyboardType: TextInputType.number,
+                                          style: const TextStyle(
+                                            fontFamily: 'Poppins',
+                                            fontSize: 14,
+                                            color: AppColors.black,
+                                          ),
+                                          decoration: InputDecoration(
+                                            hintText: '123',
+                                            hintStyle: TextStyle(
+                                              fontFamily: 'Poppins',
+                                              fontSize: 14,
+                                              color: AppColors.black.withOpacity(0.5),
+                                            ),
+                                            filled: true,
+                                            fillColor: const Color(0xFFE8F5E9),
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(12),
+                                              borderSide: BorderSide.none,
+                                            ),
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              horizontal: 16,
+                                              vertical: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
 
                           const SizedBox(height: 24),
 
@@ -609,10 +958,12 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                     ),
                   ),
                 ),
-              ],
+                ],
+              ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -664,15 +1015,12 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                 color: AppColors.grayText,
               ),
               const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 10,
-                    color: AppColors.grayText,
-                  ),
+              Text(
+                label,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 10,
+                  color: AppColors.grayText,
                 ),
               ),
             ],

@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/screens/launch_a_screen.dart';
 import 'package:stacksave/screens/launch_b_screen.dart';
 import 'package:stacksave/services/wallet_service.dart';
 
-void main() {
+Future<void> main() async {
+  // Load environment variables
+  await dotenv.load(fileName: ".env");
+
   runApp(
     MultiProvider(
       providers: [

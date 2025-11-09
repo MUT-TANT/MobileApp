@@ -1,212 +1,303 @@
-// WalletConnect V2 service for connecting external wallets
+// WalletConnect service using Reown AppKit (official WalletConnect v2)
 
 import 'package:flutter/foundation.dart';
-import 'package:wallet_connect_v2/wallet_connect_v2.dart';
+import 'package:flutter/material.dart';
+import 'package:reown_appkit/reown_appkit.dart';
+import 'package:web3dart/web3dart.dart';
+import 'package:web3dart/crypto.dart';
 
 class WalletService extends ChangeNotifier {
-  WalletConnectV2? _client;
+  ReownAppKitModal? _appKitModal;
+  ReownAppKitModal? get appKitModal => _appKitModal;
 
-  bool _isConnected = false;
-  bool get isConnected => _isConnected;
+  bool get isConnected => _appKitModal?.isConnected ?? false;
 
-  // Wallet address
-  String? _walletAddress;
-  String? get walletAddress => _walletAddress;
+  String? get walletAddress {
+    if (_appKitModal?.session == null) return null;
 
-  // Error message for UI
+    // Get all accounts from the session
+    final accounts = _appKitModal?.session?.getAccounts();
+
+    if (accounts == null || accounts.isEmpty) return null;
+
+    // Accounts are in format "eip155:1:0xABCD..."
+    // Extract the address part (after the second colon)
+    final firstAccount = accounts.first;
+    final parts = firstAccount.split(':');
+
+    if (parts.length >= 3) {
+      return parts[2]; // Return the 0x... address
+    }
+
+    return null;
+  }
+
+  String get shortenedAddress {
+    final address = walletAddress;
+    if (address == null || address.isEmpty) {
+      return 'Not connected';
+    }
+    if (address.length <= 10) {
+      return address;
+    }
+    return '${address.substring(0, 6)}...${address.substring(address.length - 4)}';
+  }
+
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
-  // WalletConnect pairing URI (for QR code or deep link)
-  String? _pairingUri;
-  String? get pairingUri => _pairingUri;
+  // Callbacks for UI
+  void Function()? onSessionConnect;
+  void Function()? onSessionDelete;
 
-  // Shortened address for display (e.g., "0x1234...5678")
-  String get shortenedAddress {
-    if (_walletAddress == null || _walletAddress!.isEmpty) {
-      return 'Not connected';
-    }
-    if (_walletAddress!.length <= 10) {
-      return _walletAddress!;
-    }
-    return '${_walletAddress!.substring(0, 6)}...${_walletAddress!.substring(_walletAddress!.length - 4)}';
-  }
-
-  // Session data
-  Session? session;
-
-  // Callbacks you can set from UI if you prefer (optional)
-  void Function(bool connected)? onConnectionStatus;
-  void Function(dynamic proposal)? onSessionProposal;
-  void Function(Session session)? onSessionSettle;
-  void Function(dynamic topic)? onSessionUpdate;
-  void Function(dynamic topic)? onSessionDelete;
-  void Function(dynamic request)? onSessionRequest;
-  void Function(dynamic topic)? onSessionRejection;
-  void Function(dynamic topic)? onSessionResponse;
-
-  /// Initialize the SDK client with your projectId and app metadata.
-  Future<void> init({required String projectId, required dynamic appMetadata}) async {
+  /// Initialize the Reown AppKit modal
+  Future<void> init({
+    required BuildContext context,
+    required String projectId,
+    required PairingMetadata metadata,
+  }) async {
     try {
-      _client = WalletConnectV2();
-      await _client!.init(projectId: projectId, appMetadata: appMetadata);
+      _errorMessage = null;
 
-      // Map the SDK callbacks
-      _client!.onConnectionStatus = (isConnected) {
-        _isConnected = isConnected;
-        onConnectionStatus?.call(isConnected);
-        notifyListeners();
-      };
+      _appKitModal = ReownAppKitModal(
+        context: context,
+        projectId: projectId,
+        metadata: metadata,
+        enableAnalytics: true,
+        disconnectOnDispose: false,
+      );
+
+      // Setup event listeners
+      _appKitModal!.onModalConnect.subscribe(_onModalConnect);
+      _appKitModal!.onModalDisconnect.subscribe(_onModalDisconnect);
+      _appKitModal!.onModalError.subscribe(_onModalError);
+
+      // Initialize the modal
+      await _appKitModal!.init();
+
+      notifyListeners();
+
+      if (kDebugMode) {
+        print('Reown AppKit initialized successfully');
+      }
     } catch (e) {
       if (kDebugMode) {
-        print('WalletConnect init error: $e');
+        print('Reown AppKit init error: $e');
       }
       _errorMessage = 'Failed to initialize: ${e.toString()}';
       notifyListeners();
     }
   }
 
-  /// Connect to WalletConnect and generate pairing URI
-  /// Returns true if connection initiated successfully (not yet approved by wallet)
-  Future<bool> connectWallet() async {
+  void _onModalConnect(ModalConnect? event) {
+    if (kDebugMode) {
+      final chainId = _appKitModal?.selectedChain?.chainId ?? '1';
+      print('Modal connected: ${event?.session.getAddress(chainId)}');
+    }
+    onSessionConnect?.call();
+    notifyListeners();
+  }
+
+  void _onModalDisconnect(ModalDisconnect? event) {
+    if (kDebugMode) {
+      print('Modal disconnected');
+    }
+    onSessionDelete?.call();
+    notifyListeners();
+  }
+
+  void _onModalError(ModalError? event) {
+    if (kDebugMode) {
+      print('Modal error: ${event?.message}');
+    }
+    _errorMessage = event?.message ?? 'Unknown error';
+    notifyListeners();
+  }
+
+  /// Open the wallet connection modal
+  Future<void> openModal() async {
+    if (_appKitModal == null) {
+      _errorMessage = 'AppKit not initialized. Call init() first.';
+      notifyListeners();
+      return;
+    }
+
     try {
-      _errorMessage = null; // Clear previous errors
-      _pairingUri = null;
-
-      if (_client == null) {
-        _errorMessage = 'WalletConnect not initialized';
-        notifyListeners();
-        return false;
-      }
-
-      // Connect to WalletConnect relay
-      await _client!.connect();
-
-      // Setup session proposal listener
-      _client!.onSessionSettle = (Session settledSession) {
-        if (kDebugMode) {
-          print('Session settled: ${settledSession.topic}');
-        }
-
-        // Extract wallet address from session
-        try {
-          // Get accounts from session namespaces
-          final namespaces = settledSession.namespaces;
-          if (namespaces.isNotEmpty) {
-            // Get accounts from eip155 namespace (Ethereum)
-            final eip155 = namespaces['eip155'];
-            if (eip155 != null && eip155.accounts.isNotEmpty) {
-              final account = eip155.accounts[0];
-              // Format: "eip155:1:0xAddress"
-              final parts = account.split(':');
-              if (parts.length >= 3) {
-                _walletAddress = parts[2];
-              } else {
-                _walletAddress = account;
-              }
-
-              _isConnected = true;
-              session = settledSession;
-              onSessionSettle?.call(settledSession);
-              notifyListeners();
-
-              if (kDebugMode) {
-                print('Wallet connected: $_walletAddress');
-              }
-            }
-          }
-        } catch (e) {
-          if (kDebugMode) {
-            print('Error parsing session accounts: $e');
-          }
-          _errorMessage = 'Failed to get wallet address';
-          notifyListeners();
-        }
-      };
-
-      // Setup session rejection listener
-      _client!.onSessionRejection = (topic) {
-        if (kDebugMode) {
-          print('Session rejected: $topic');
-        }
-        _errorMessage = 'Connection rejected by wallet';
-        _isConnected = false;
-        onSessionRejection?.call(topic);
-        notifyListeners();
-      };
-
-      // Create session proposal with Ethereum namespace
-      final namespaces = <String, ProposalNamespace>{
-        'eip155': ProposalNamespace(
-          methods: [
-            'eth_sendTransaction',
-            'eth_signTransaction',
-            'eth_sign',
-            'personal_sign',
-            'eth_signTypedData',
-          ],
-          chains: ['eip155:1'], // Ethereum Mainnet (change as needed)
-          events: ['chainChanged', 'accountsChanged'],
-        ),
-      };
-
-      // Generate pairing URI and get connection info
-      final connectionInfo = await _client!.createPair(namespaces: namespaces);
-
-      // Store the pairing URI for QR code or deep link
-      // The URI format should be like: wc:xxxxx@2?relay-protocol=...
-      if (connectionInfo is String) {
-        _pairingUri = connectionInfo;
-      } else {
-        // If connectionInfo is an object, try to get uri property
-        _pairingUri = connectionInfo.toString();
-      }
-
-      if (kDebugMode) {
-        print('WalletConnect pairing URI: $_pairingUri');
-        print('Waiting for wallet approval...');
-      }
-
-      notifyListeners(); // Notify listeners so UI can access pairingUri
-
-      // Return true to indicate connection initiated
-      // Actual connection completion happens in onSessionSettle callback
-      return true;
+      _errorMessage = null;
+      await _appKitModal!.openModalView();
     } catch (e) {
       if (kDebugMode) {
-        print('WalletConnect error: $e');
+        print('Error opening modal: $e');
       }
-      _errorMessage = 'Failed to connect: ${e.toString()}';
-      _isConnected = false;
+      _errorMessage = 'Failed to open modal: ${e.toString()}';
       notifyListeners();
-      return false;
     }
   }
 
   /// Disconnect from the wallet
-  Future<void> disconnectWallet() async {
-    try {
-      if (_client != null && session != null) {
-        await _client!.disconnectSession(topic: session!.topic);
-      }
+  Future<void> disconnect() async {
+    if (_appKitModal == null) return;
 
-      _isConnected = false;
-      _walletAddress = null;
+    try {
+      await _appKitModal!.disconnect();
       _errorMessage = null;
-      _pairingUri = null;
-      session = null;
-      onConnectionStatus?.call(false);
       notifyListeners();
     } catch (e) {
+      if (kDebugMode) {
+        print('Error disconnecting: $e');
+      }
       _errorMessage = 'Failed to disconnect: ${e.toString()}';
       notifyListeners();
     }
   }
 
+  /// Get current chain/network info
+  ReownAppKitModalNetworkInfo? get currentNetwork => _appKitModal?.selectedChain;
+
+  /// Check if a specific chain is selected
+  bool isChainSelected(String chainId) {
+    return _appKitModal?.selectedChain?.chainId == chainId;
+  }
+
+  /// Send a transaction and get it signed by the connected wallet
+  Future<String> sendTransaction({
+    required String to,
+    required String data,
+    String? value,
+    String? gasLimit,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    final address = walletAddress;
+    if (address == null) {
+      throw Exception('No wallet address found');
+    }
+
+    try {
+      // Build transaction params
+      final params = {
+        'from': address,
+        'to': to,
+        'data': data,
+        if (value != null) 'value': value,
+        if (gasLimit != null) 'gas': gasLimit,
+      };
+
+      // Request signature from wallet using eth_sendTransaction
+      final txHash = await _appKitModal!.request(
+        topic: _appKitModal!.session!.topic,
+        chainId: 'eip155:${_appKitModal!.selectedChain!.chainId}',
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [params],
+        ),
+      );
+
+      if (kDebugMode) {
+        print('Transaction sent: $txHash');
+      }
+
+      return txHash.toString();
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error sending transaction: $e');
+      }
+      throw Exception('Failed to send transaction: ${e.toString()}');
+    }
+  }
+
+  /// Approve ERC20 token spending
+  Future<String> approveToken({
+    required String tokenAddress,
+    required String spenderAddress,
+    required BigInt amount,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    try {
+      // ERC20 approve function signature: approve(address,uint256)
+      final function = ContractFunction(
+        'approve',
+        [
+          FunctionParameter('spender', AddressType()),
+          FunctionParameter('amount', UintType()),
+        ],
+      );
+
+      final params = [
+        EthereumAddress.fromHex(spenderAddress),
+        amount,
+      ];
+
+      final data = function.encodeCall(params);
+
+      // Send approval transaction
+      final txHash = await sendTransaction(
+        to: tokenAddress,
+        data: bytesToHex(data, include0x: true),
+      );
+
+      if (kDebugMode) {
+        print('Token approval sent: $txHash');
+      }
+
+      return txHash;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error approving token: $e');
+      }
+      throw Exception('Failed to approve token: ${e.toString()}');
+    }
+  }
+
+  /// Call a contract function and get transaction hash
+  Future<String> contractCall({
+    required String contractAddress,
+    required String functionName,
+    required List<dynamic> params,
+    required List<FunctionParameter> functionParams,
+    String? value,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    try {
+      // Build function
+      final function = ContractFunction(functionName, functionParams);
+      final data = function.encodeCall(params);
+
+      // Send transaction
+      final txHash = await sendTransaction(
+        to: contractAddress,
+        data: bytesToHex(data, include0x: true),
+        value: value,
+      );
+
+      if (kDebugMode) {
+        print('Contract call sent: $txHash');
+      }
+
+      return txHash;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error calling contract: $e');
+      }
+      throw Exception('Failed to call contract: ${e.toString()}');
+    }
+  }
+
   @override
   void dispose() {
-    // Optionally disconnect socket
-    // await _client?.disconnect();
+    // Unsubscribe from events
+    _appKitModal?.onModalConnect.unsubscribe(_onModalConnect);
+    _appKitModal?.onModalDisconnect.unsubscribe(_onModalDisconnect);
+    _appKitModal?.onModalError.unsubscribe(_onModalError);
+
     super.dispose();
   }
 }

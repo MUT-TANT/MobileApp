@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:reown_appkit/reown_appkit.dart';
 import 'package:stacksave/constants/colors.dart';
-import 'package:stacksave/services/wallet_connect_service.dart';
-import 'package:stacksave/screens/add_goals_screen.dart';
+import 'package:stacksave/services/wallet_service.dart';
+import 'package:stacksave/screens/main_navigation.dart';
 
 class LaunchBScreen extends StatefulWidget {
   const LaunchBScreen({super.key});
@@ -12,68 +13,98 @@ class LaunchBScreen extends StatefulWidget {
 }
 
 class _LaunchBScreenState extends State<LaunchBScreen> {
-  bool _isConnecting = false;
+  bool _isInitializing = true;
 
-  Future<void> _handleConnectWallet() async {
-    final wc = context.read<WalletConnectService>();
+  @override
+  void initState() {
+    super.initState();
+    _initializeWalletService();
+  }
 
-    setState(() {
-      _isConnecting = true;
-    });
+  Future<void> _initializeWalletService() async {
+    final walletService = context.read<WalletService>();
 
-    try {
-      // TODO: replace with your real WalletConnect projectId and proper metadata
-      const projectId = 'REPLACE_WITH_YOUR_PROJECT_ID';
-      final appMetadata = {
-        'name': 'StackSave',
-        'description': 'StackSave wallet',
-        'url': 'https://stacksave.app',
-        'icons': ['https://stacksave.app/favicon.ico'],
-      };
+    // Initialize Reown AppKit
+    await walletService.init(
+      context: context,
+      projectId: '6d3e960e153683b5bba12c57cbdddf75',
+      metadata: const PairingMetadata(
+        name: 'StackSave',
+        description: 'Save easily, grow effortlessly',
+        url: 'https://stacksave.app',
+        icons: ['https://stacksave.app/icon.png'],
+        redirect: Redirect(
+          native: 'stacksave://',
+          universal: 'https://stacksave.app',
+          linkMode: true,
+        ),
+      ),
+    );
 
-      await wc.init(projectId: projectId, appMetadata: appMetadata);
-      await wc.connect();
+    // Check if wallet is already connected (persisted session)
+    if (walletService.isConnected) {
+      // Navigate immediately to MainNavigation
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => const MainNavigation(),
+          ),
+        );
+      }
+      return; // Exit early, no need to set up callbacks
+    }
 
+    // Setup callbacks
+    walletService.onSessionConnect = () {
       if (!mounted) return;
 
+      // Show success message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Connected'),
+          content: Text('Connected: ${walletService.shortenedAddress}'),
           backgroundColor: AppColors.primary,
           behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ),
       );
 
-      // Navigate to Add Goals screen after short delay
+      // Navigate to Main Navigation (HomeScreen)
       Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
-              builder: (context) => const AddGoalsScreen(),
+              builder: (context) => const MainNavigation(),
             ),
           );
         }
       });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to connect wallet: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } finally {
-      setState(() {
-        _isConnecting = false;
-      });
-    }
+    };
+
+    setState(() {
+      _isInitializing = false;
+    });
+  }
+
+  Future<void> _handleConnectWallet() async {
+    final walletService = context.read<WalletService>();
+
+    // Open Reown AppKit modal (with built-in wallet selection UI)
+    await walletService.openModal();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isInitializing) {
+      return const Scaffold(
+        backgroundColor: AppColors.lightBackground,
+        body: Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.lightBackground,
       body: SafeArea(
@@ -107,9 +138,9 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
               const Spacer(flex: 1),
 
               // Wallet Status or Connect Button
-              Consumer<WalletConnectService>(
-                builder: (context, wcService, child) {
-                  if (wcService.isConnected) {
+              Consumer<WalletService>(
+                builder: (context, walletService, child) {
+                  if (walletService.isConnected) {
                     return Column(
                       children: [
                         // Connected status
@@ -143,7 +174,7 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                'Connected',
+                                walletService.shortenedAddress,
                                 style: const TextStyle(
                                   fontFamily: 'Poppins',
                                   fontSize: 14,
@@ -161,8 +192,9 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
                           height: 56,
                           child: OutlinedButton(
                             onPressed: () async {
-                              await wcService.disconnect();
+                              await walletService.disconnect();
                               if (mounted) {
+                                // ignore: use_build_context_synchronously
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
                                     content: Text('Wallet disconnected'),
@@ -197,7 +229,7 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
                     width: double.infinity,
                     height: 56,
                     child: ElevatedButton(
-                      onPressed: _isConnecting ? null : _handleConnectWallet,
+                      onPressed: _handleConnectWallet,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: AppColors.black,
@@ -205,25 +237,15 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
                           borderRadius: BorderRadius.circular(28),
                         ),
                         elevation: 0,
-                        disabledBackgroundColor: AppColors.grayText,
                       ),
-                      child: _isConnecting
-                          ? const SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(AppColors.black),
-                              ),
-                            )
-                          : const Text(
-                              'Connect Wallet',
-                              style: TextStyle(
-                                fontFamily: 'Poppins',
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                      child: const Text(
+                        'Connect Wallet',
+                        style: TextStyle(
+                          fontFamily: 'Poppins',
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   );
                 },

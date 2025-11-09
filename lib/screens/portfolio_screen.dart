@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:stacksave/constants/colors.dart';
+import 'package:stacksave/services/api_service.dart';
+import 'package:stacksave/services/wallet_service.dart';
+import 'package:stacksave/models/goal_model.dart';
 import 'dart:math' as math;
 
 class PortfolioScreen extends StatefulWidget {
@@ -15,96 +19,124 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
   final ScrollController _scrollController = ScrollController();
   double _scrollOffset = 0.0;
 
-  // Portfolio data
-  final double totalBalance = 7783.00;
-  final double totalProfit = 23.0; // percentage
-  final double goalProgress = 0.2; // 20%
-  final double goalTarget = 20000.00;
-  final double averageAPY = 67.0;
-  final double totalEarnings = 1187.40;
+  // Real data from blockchain
+  List<GoalModel> _goals = [];
+  bool _isLoading = true;
+  String? _errorMessage;
 
-  // Weekly earnings data
-  final List<Map<String, dynamic>> weeklyEarnings = [
-    {'day': 'Mon', 'amount': 105.5},
-    {'day': 'Tue', 'amount': 142.3},
-    {'day': 'Wed', 'amount': 178.2},
-    {'day': 'Thu', 'amount': 95.7},
-    {'day': 'Fri', 'amount': 267.8},
-    {'day': 'Sat', 'amount': 89.4},
-    {'day': 'Sun', 'amount': 156.9},
-  ];
+  // Wallet balances from Tenderly fork
+  double _ethBalance = 0.0;
+  double _daiBalance = 0.0;
+  double _usdcBalance = 0.0;
+  double _wethBalance = 0.0;
 
-  // Portfolio allocation data
-  final List<Map<String, dynamic>> portfolioAllocation = [
-    {
-      'name': 'Stablecoins',
-      'percentage': 35.0,
-      'amount': 2724.05,
-      'color': const Color(0xFF4CAF50),
-      'icon': Icons.account_balance_wallet,
-    },
-    {
-      'name': 'SOL',
-      'percentage': 25.0,
-      'amount': 1945.75,
-      'color': const Color(0xFF9C27B0),
-      'icon': Icons.currency_bitcoin,
-    },
-    {
-      'name': 'Staked Assets',
-      'percentage': 30.0,
-      'amount': 2334.90,
-      'color': const Color(0xFF2196F3),
-      'icon': Icons.trending_up,
-    },
-    {
-      'name': 'Liquid Assets',
-      'percentage': 10.0,
-      'amount': 778.30,
-      'color': const Color(0xFFFF9800),
-      'icon': Icons.water_drop,
-    },
-  ];
+  // Calculated portfolio data
+  double get totalBalance {
+    // Total = wallet balances + goals current value
+    final walletTotal = _ethBalance + _daiBalance + _usdcBalance + _wethBalance;
+    final goalsTotal = _goals.fold(0.0, (sum, goal) => sum + goal.currentValueDouble);
+    return walletTotal + goalsTotal;
+  }
 
-  // Pools data
-  final List<Map<String, dynamic>> pools = [
-    {
-      'name': 'USDC Staking Pool',
-      'icon': Icons.shield_outlined,
-      'staked': 1500.00,
-      'apy': 6.5,
-      'earnings': 97.50,
-      'status': 'Active',
-      'color': const Color(0xFF4CAF50),
-    },
-    {
-      'name': 'SOL Staking Pool',
-      'icon': Icons.currency_bitcoin,
-      'staked': 1945.75,
-      'apy': 6.8,
-      'earnings': 132.31,
-      'status': 'Active',
-      'color': const Color(0xFF9C27B0),
-    },
-    {
-      'name': 'Liquidity Pool',
-      'icon': Icons.water_drop,
-      'staked': 2000.00,
-      'apy': 18.5,
-      'earnings': 370.00,
-      'status': 'Active',
-      'color': const Color(0xFF2196F3),
-    },
-    {
-      'name': 'High Yield Pool',
-      'icon': Icons.trending_up,
-      'staked': 1337.25,
-      'apy': 28.3,
-      'earnings': 378.44,
-      'status': 'Locked',
-      'color': const Color(0xFFFF9800),
-    },
-  ];
+  double get totalDeposited {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.depositedAmountDouble);
+  }
+
+  double get totalEarnings {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.yieldEarnedDouble);
+  }
+
+  double get totalProfit {
+    if (totalDeposited == 0) return 0.0;
+    return ((totalEarnings / totalDeposited) * 100);
+  }
+
+  double get goalProgress {
+    if (_goals.isEmpty) return 0.0;
+    final totalTarget = _goals.fold(0.0, (sum, goal) => sum + goal.targetAmountDouble);
+    if (totalTarget == 0) return 0.0;
+    return (totalDeposited / totalTarget).clamp(0.0, 1.0);
+  }
+
+  double get goalTarget {
+    return _goals.fold(0.0, (sum, goal) => sum + goal.targetAmountDouble);
+  }
+
+  double get averageAPY {
+    // Calculate from goals (simplified)
+    if (_goals.isEmpty) return 0.0;
+    // Assuming 5-8% APY for now
+    return 6.5;
+  }
+
+  // Weekly earnings data (calculated from goals' daily saves)
+  List<Map<String, dynamic>> get weeklyEarnings {
+    // Simplified: Get last 7 days from goals
+    final days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return List.generate(7, (index) {
+      double amount = 0.0;
+      // Sum up deposits from all goals for this day
+      for (var goal in _goals) {
+        if (goal.dailySaves != null && index < goal.dailySaves!.length) {
+          amount += double.tryParse(goal.dailySaves![index].amount) ?? 0.0;
+        }
+      }
+      return {'day': days[index], 'amount': amount};
+    });
+  }
+
+  // Portfolio allocation data (calculated from wallet balances)
+  List<Map<String, dynamic>> get portfolioAllocation {
+    final walletTotal = _ethBalance + _daiBalance + _usdcBalance + _wethBalance;
+    if (walletTotal == 0) return [];
+
+    return [
+      if (_ethBalance > 0) {
+        'name': 'ETH',
+        'percentage': (_ethBalance / walletTotal) * 100,
+        'amount': _ethBalance,
+        'color': const Color(0xFF627EEA),
+        'icon': Icons.currency_bitcoin,
+      },
+      if (_daiBalance > 0) {
+        'name': 'DAI',
+        'percentage': (_daiBalance / walletTotal) * 100,
+        'amount': _daiBalance,
+        'color': const Color(0xFFF4B731),
+        'icon': Icons.account_balance_wallet,
+      },
+      if (_usdcBalance > 0) {
+        'name': 'USDC',
+        'percentage': (_usdcBalance / walletTotal) * 100,
+        'amount': _usdcBalance,
+        'color': const Color(0xFF2775CA),
+        'icon': Icons.shield_outlined,
+      },
+      if (_wethBalance > 0) {
+        'name': 'WETH',
+        'percentage': (_wethBalance / walletTotal) * 100,
+        'amount': _wethBalance,
+        'color': const Color(0xFF4CAF50),
+        'icon': Icons.water_drop,
+      },
+    ];
+  }
+
+  // Pools data (mapped from user's actual goals)
+  List<Map<String, dynamic>> get pools {
+    return _goals.map((goal) {
+      final statusText = ['Active', 'Completed', 'Abandoned', 'Withdrawn'][goal.status ?? 0];
+      return {
+        'name': goal.name,
+        'icon': Icons.savings_outlined,
+        'staked': goal.depositedAmountDouble,
+        'apy': 6.5, // Could fetch from API
+        'earnings': goal.yieldEarnedDouble,
+        'status': statusText,
+        'color': goal.mode == 0 ? const Color(0xFF4CAF50) : const Color(0xFFFF9800),
+      };
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -114,6 +146,87 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         _scrollOffset = _scrollController.offset;
       });
     });
+
+    // Load goals from API - defer until after first frame renders
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadGoals();
+    });
+  }
+
+  Future<void> _loadGoals() async {
+    final walletService = context.read<WalletService>();
+
+    if (!walletService.isConnected || walletService.walletAddress == null) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Please connect your wallet';
+      });
+      return;
+    }
+
+    try {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      final apiService = ApiService();
+
+      // Fetch portfolio data (includes wallet balances + goals summary)
+      final portfolioResponse = await apiService.getUserPortfolio(walletService.walletAddress!);
+      final portfolioData = portfolioResponse['data'];
+
+      // Extract wallet balances
+      final ethData = portfolioData['balances']['eth'];
+      final tokensData = portfolioData['balances']['tokens'] as List;
+
+      double ethBalance = 0.0;
+      double daiBalance = 0.0;
+      double usdcBalance = 0.0;
+      double wethBalance = 0.0;
+
+      try {
+        ethBalance = double.parse(ethData['balance'].toString());
+      } catch (e) {
+        print('Error parsing ETH balance: $e');
+      }
+
+      for (var token in tokensData) {
+        try {
+          final symbol = token['symbol'].toString().toUpperCase();
+          final balance = double.parse(token['balance'].toString());
+
+          if (symbol == 'DAI') {
+            daiBalance = balance;
+          } else if (symbol == 'USDC') {
+            usdcBalance = balance;
+          } else if (symbol == 'WETH') {
+            wethBalance = balance;
+          }
+        } catch (e) {
+          print('Error parsing token balance: $e');
+        }
+      }
+
+      // Fetch goals separately to get full details with dailySaves
+      final goalsResponse = await apiService.getUserGoals(walletService.walletAddress!);
+      final goalsData = goalsResponse['data']['goals'] as List;
+      final goals = goalsData.map((json) => GoalModel.fromJson(json)).toList();
+
+      setState(() {
+        _ethBalance = ethBalance;
+        _daiBalance = daiBalance;
+        _usdcBalance = usdcBalance;
+        _wethBalance = wethBalance;
+        _goals = goals;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'Failed to load portfolio: ${e.toString()}';
+      });
+    }
   }
 
   @override
@@ -262,8 +375,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
                                 child: LinearProgressIndicator(
-                                  value: goalProgress,
-                                  backgroundColor: Colors.grey[300],
+                                value: goalProgress.isFinite ? goalProgress.clamp(0.0, 1.0) : 0.0,
+                                backgroundColor: Colors.grey[300],
                                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.black),
                                   minHeight: 8,
                                 ),
@@ -441,8 +554,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                   children: [
                     Container(
                       width: 30,
-                      height: height,
-                      decoration: BoxDecoration(
+                        height: height.isFinite ? height.clamp(0.0, 130.0) : 0.0,
+                        decoration: BoxDecoration(
                         color: AppColors.primary,
                         borderRadius: BorderRadius.circular(4),
                       ),
