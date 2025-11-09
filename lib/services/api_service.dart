@@ -139,6 +139,17 @@ class ApiService {
     }
   }
 
+  /// Get user's portfolio (wallet balances + goals summary)
+  /// GET /users/:address/portfolio
+  Future<Map<String, dynamic>> getUserPortfolio(String address) async {
+    try {
+      final response = await _dio.get('/users/${address.toLowerCase()}/portfolio');
+      return _handleResponse(response);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
   /// Deposit to a goal
   /// POST /goals/:goalId/deposit
   Future<Map<String, dynamic>> deposit({

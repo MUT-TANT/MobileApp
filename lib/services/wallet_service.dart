@@ -3,6 +3,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:reown_appkit/reown_appkit.dart';
+import 'package:web3dart/web3dart.dart';
+import 'package:web3dart/crypto.dart';
 
 class WalletService extends ChangeNotifier {
   ReownAppKitModal? _appKitModal;
@@ -155,6 +157,138 @@ class WalletService extends ChangeNotifier {
   /// Check if a specific chain is selected
   bool isChainSelected(String chainId) {
     return _appKitModal?.selectedChain?.chainId == chainId;
+  }
+
+  /// Send a transaction and get it signed by the connected wallet
+  Future<String> sendTransaction({
+    required String to,
+    required String data,
+    String? value,
+    String? gasLimit,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    final address = walletAddress;
+    if (address == null) {
+      throw Exception('No wallet address found');
+    }
+
+    try {
+      // Build transaction params
+      final params = {
+        'from': address,
+        'to': to,
+        'data': data,
+        if (value != null) 'value': value,
+        if (gasLimit != null) 'gas': gasLimit,
+      };
+
+      // Request signature from wallet using eth_sendTransaction
+      final txHash = await _appKitModal!.request(
+        topic: _appKitModal!.session!.topic,
+        chainId: 'eip155:${_appKitModal!.selectedChain!.chainId}',
+        request: SessionRequestParams(
+          method: 'eth_sendTransaction',
+          params: [params],
+        ),
+      );
+
+      if (kDebugMode) {
+        print('Transaction sent: $txHash');
+      }
+
+      return txHash.toString();
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error sending transaction: $e');
+      }
+      throw Exception('Failed to send transaction: ${e.toString()}');
+    }
+  }
+
+  /// Approve ERC20 token spending
+  Future<String> approveToken({
+    required String tokenAddress,
+    required String spenderAddress,
+    required BigInt amount,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    try {
+      // ERC20 approve function signature: approve(address,uint256)
+      final function = ContractFunction(
+        'approve',
+        [
+          FunctionParameter('spender', AddressType()),
+          FunctionParameter('amount', UintType()),
+        ],
+      );
+
+      final params = [
+        EthereumAddress.fromHex(spenderAddress),
+        amount,
+      ];
+
+      final data = function.encodeCall(params);
+
+      // Send approval transaction
+      final txHash = await sendTransaction(
+        to: tokenAddress,
+        data: bytesToHex(data, include0x: true),
+      );
+
+      if (kDebugMode) {
+        print('Token approval sent: $txHash');
+      }
+
+      return txHash;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error approving token: $e');
+      }
+      throw Exception('Failed to approve token: ${e.toString()}');
+    }
+  }
+
+  /// Call a contract function and get transaction hash
+  Future<String> contractCall({
+    required String contractAddress,
+    required String functionName,
+    required List<dynamic> params,
+    required List<FunctionParameter> functionParams,
+    String? value,
+  }) async {
+    if (_appKitModal == null || !isConnected) {
+      throw Exception('Wallet not connected');
+    }
+
+    try {
+      // Build function
+      final function = ContractFunction(functionName, functionParams);
+      final data = function.encodeCall(params);
+
+      // Send transaction
+      final txHash = await sendTransaction(
+        to: contractAddress,
+        data: bytesToHex(data, include0x: true),
+        value: value,
+      );
+
+      if (kDebugMode) {
+        print('Contract call sent: $txHash');
+      }
+
+      return txHash;
+    } catch (e) {
+      if (kDebugMode) {
+        print('Error calling contract: $e');
+      }
+      throw Exception('Failed to call contract: ${e.toString()}');
+    }
   }
 
   @override

@@ -4,6 +4,8 @@ import 'package:visibility_detector/visibility_detector.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/services/api_service.dart';
 import 'package:stacksave/services/wallet_service.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:web3dart/web3dart.dart';
 
 class AddSavingScreen extends StatefulWidget {
   final bool showNavBar;
@@ -169,6 +171,19 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
       return;
     }
 
+    final walletService = context.read<WalletService>();
+
+    if (!walletService.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please connect your wallet first'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     // Show loading dialog
     showDialog(
       context: context,
@@ -179,13 +194,46 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     );
 
     try {
-      final apiService = ApiService();
+      // Get contract addresses from .env
+      final stackSaveAddress = dotenv.env['STACKSAVE_CONTRACT']!;
+      final daiAddress = dotenv.env['DAI_ADDRESS']!;
 
-      // Call deposit API with real goalId
-      final result = await apiService.deposit(
-        goalId: _selectedGoalId!,
-        amount: _amountController.text.replaceAll(',', ''),
+      // Convert amount to wei (DAI has 18 decimals)
+      final amount = double.parse(_amountController.text.replaceAll(',', ''));
+      final amountWei = BigInt.from(amount * 1e18);
+
+      print('💰 Depositing: $amount DAI = $amountWei wei');
+      print('📍 StackSave: $stackSaveAddress');
+      print('📍 DAI: $daiAddress');
+      print('🎯 Goal ID: $_selectedGoalId');
+
+      // Step 1: Approve StackSave to spend DAI
+      print('✍️ Requesting approval...');
+      final approveTxHash = await walletService.approveToken(
+        tokenAddress: daiAddress,
+        spenderAddress: stackSaveAddress,
+        amount: amountWei,
       );
+      print('✅ Approval TX: $approveTxHash');
+
+      // Wait a bit for approval to be mined
+      await Future.delayed(const Duration(seconds: 2));
+
+      // Step 2: Call deposit on StackSave contract
+      print('✍️ Calling deposit...');
+      final depositTxHash = await walletService.contractCall(
+        contractAddress: stackSaveAddress,
+        functionName: 'deposit',
+        params: [
+          BigInt.from(_selectedGoalId!),
+          amountWei,
+        ],
+        functionParams: [
+          FunctionParameter('goalId', UintType()),
+          FunctionParameter('amount', UintType()),
+        ],
+      );
+      print('✅ Deposit TX: $depositTxHash');
 
       // Close loading dialog
       if (!mounted) return;
@@ -209,7 +257,7 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
               Text(
-                result['data']['txHash'] ?? 'N/A',
+                depositTxHash,
                 style: const TextStyle(fontSize: 10),
               ),
               const SizedBox(height: 12),
