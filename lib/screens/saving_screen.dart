@@ -49,38 +49,6 @@ class _SavingScreenState extends State<SavingScreen> with SingleTickerProviderSt
                   ),
 
                   const SizedBox(height: 16),
-
-                  // Tab Bar
-                  Container(
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    child: TabBar(
-                      controller: _tabController,
-                      indicator: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(25),
-                      ),
-                      labelColor: AppColors.primary,
-                      unselectedLabelColor: Colors.white,
-                      labelStyle: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      unselectedLabelStyle: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      tabs: const [
-                        Tab(text: 'Add Saving'),
-                        Tab(text: 'Withdraw'),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),

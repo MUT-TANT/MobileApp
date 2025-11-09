@@ -636,29 +636,7 @@ class _WithdrawScreenState extends State<WithdrawScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            // Header (will fade out on scroll)
-            Positioned(
-              top: headerTranslateY,
-              left: 0,
-              right: 0,
-              child: Opacity(
-                opacity: headerOpacity,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Center(
-                    child: const Text(
-                      'Withdraw',
-                      style: TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            // (Header removed - intentionally hidden to avoid duplicate title below the top bar)
 
             // Form Container (scrollable white card)
             CustomScrollView(
