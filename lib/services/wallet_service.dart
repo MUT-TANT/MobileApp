@@ -4,12 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:reown_appkit/reown_appkit.dart';
+import 'package:stacksave/utils/deep_link_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/web3dart.dart';
 import 'package:web3dart/crypto.dart';
 
 class WalletService extends ChangeNotifier {
   ReownAppKitModal? _appKitModal;
+  final DeepLinkHandler _deepLinkHandler = DeepLinkHandler();
   ReownAppKitModal? get appKitModal => _appKitModal;
 
   bool get isConnected => _appKitModal?.isConnected ?? false;
@@ -91,6 +93,14 @@ class WalletService extends ChangeNotifier {
         enableAnalytics: true,
         disconnectOnDispose: false,
       );
+
+      // Initialize deep link handler so that wallet callbacks are dispatched
+      // to the Reown AppKit modal. This ensures wallet responses return to
+      // the app instead of staying inside the wallet's in-app browser.
+      _deepLinkHandler.init(_appKitModal!);
+      // Check if the app was launched via a deep link before Flutter was
+      // ready (initialLink) and dispatch it to AppKit.
+      await _deepLinkHandler.checkInitialLink();
 
       // Setup event listeners
       _appKitModal!.onModalConnect.subscribe(_onModalConnect);
