@@ -35,7 +35,8 @@ class _LaunchBScreenState extends State<LaunchBScreen> {
         icons: ['https://stacksave.app/icon.png'],
         redirect: Redirect(
           native: 'stacksave://',
-          linkMode: false,
+          universal: 'https://stacksave.app/wc',
+          linkMode: false,  // Disabled - requires server-side configuration
         ),
       ),
     );

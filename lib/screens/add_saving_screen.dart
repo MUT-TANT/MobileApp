@@ -269,6 +269,7 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
 
       String? approveTxHash;
       String? depositTxHash;
+      bool isWaitingDepositConfirmation = false;
 
       // Show two-step transaction dialog
       if (!mounted) return;
@@ -324,7 +325,7 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                   _buildTransactionStep(
                     stepNumber: 1,
                     title: 'Approve Token',
-                    description: 'Allow StackSave to spend your $currencySymbol',
+                    description: 'After signing, close wallet and return to app',
                     txHash: approveTxHash,
                     isActive: approveTxHash == null,
                     isCompleted: approveTxHash != null,
@@ -336,10 +337,11 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                   _buildTransactionStep(
                     stepNumber: 2,
                     title: 'Deposit to Morpho',
-                    description: 'Stake in Morpho v2 vault',
+                    description: 'After signing, close wallet and return to app',
                     txHash: depositTxHash,
                     isActive: approveTxHash != null && depositTxHash == null,
                     isCompleted: depositTxHash != null,
+                    isWaitingConfirmation: isWaitingDepositConfirmation,
                   ),
 
                   if (depositTxHash != null) ...[
@@ -416,9 +418,14 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                   ElevatedButton(
                     onPressed: () async {
                       try {
-                        // Step 2: Deposit
+                        // Step 2: Deposit (with blockchain confirmation)
                         setDialogState(() {});
-                        final txHash = await walletService.contractCall(
+
+                        // Call contractCall which will:
+                        // 1. Launch wallet and get user signature
+                        // 2. Wait for blockchain confirmation
+                        // We need to update UI after signature but before confirmation
+                        final txHashFuture = walletService.contractCall(
                           contractAddress: stackSaveAddress,
                           functionName: 'deposit',
                           params: [
@@ -429,18 +436,42 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                             FunctionParameter('goalId', UintType()),
                             FunctionParameter('amount', UintType()),
                           ],
+                          waitForConfirmation: true, // Wait for blockchain confirmation
                         );
+
+                        // Add a small delay for wallet signature, then show confirmation waiting
+                        Future.delayed(const Duration(seconds: 3), () {
+                          if (depositTxHash == null && !isWaitingDepositConfirmation) {
+                            setDialogState(() {
+                              isWaitingDepositConfirmation = true;
+                            });
+                          }
+                        });
+
+                        final txHash = await txHashFuture;
+                        isWaitingDepositConfirmation = false;
                         depositTxHash = txHash;
                         setDialogState(() {});
-                        print('✅ Deposit TX: $txHash');
+                        print('✅ Deposit confirmed on blockchain: $txHash');
                       } catch (e) {
+                        isWaitingDepositConfirmation = false;
                         Navigator.pop(dialogContext);
                         if (!mounted) return;
+
+                        // Show specific error message
+                        String errorMsg = 'Deposit failed: ${e.toString()}';
+                        if (e.toString().contains('failed on blockchain')) {
+                          errorMsg = 'Transaction failed on blockchain. The contract may have reverted.';
+                        } else if (e.toString().contains('timeout')) {
+                          errorMsg = 'Transaction confirmation timeout. Please check your wallet and blockchain explorer.';
+                        }
+
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Deposit failed: ${e.toString()}'),
+                            content: Text(errorMsg),
                             backgroundColor: Colors.red,
                             behavior: SnackBarBehavior.floating,
+                            duration: const Duration(seconds: 5),
                           ),
                         );
                       }
@@ -454,8 +485,14 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                 else
                   ElevatedButton(
                     onPressed: () {
-                      Navigator.pop(dialogContext);
-                      Navigator.of(context).pop(true); // Return with refresh signal
+                      Navigator.pop(dialogContext); // Close the dialog
+
+                      // Only pop if this screen was pushed to navigation stack
+                      // (not embedded in TabView)
+                      if (Navigator.canPop(context)) {
+                        Navigator.of(context).pop(true); // Return with refresh signal
+                      }
+                      // If embedded in TabView, just closing dialog is enough
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
@@ -507,6 +544,7 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     String? txHash,
     required bool isActive,
     required bool isCompleted,
+    bool isWaitingConfirmation = false,
   }) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -579,7 +617,33 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                   ),
                 ),
               ],
-              if (isActive && txHash == null) ...[
+              if (isWaitingConfirmation) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.orange,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Confirming on blockchain...',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ] else if (isActive && txHash == null) ...[
                 const SizedBox(height: 4),
                 Row(
                   children: [

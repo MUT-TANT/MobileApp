@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   // Goals data
   List<GoalModel> _goals = [];
   bool _isLoadingGoals = true;
+  bool _isLoadingInProgress = false;  // Guard to prevent concurrent _loadGoals() calls
 
   @override
   void initState() {
@@ -60,6 +61,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
   }
 
   Future<void> _loadGoals() async {
+    // Prevent concurrent calls - guard against race conditions
+    if (_isLoadingInProgress) {
+      print('⚠️  _loadGoals already in progress, skipping duplicate call');
+      return;
+    }
+
+    _isLoadingInProgress = true;
+
     final walletService = context.read<WalletService>();
 
     // DEBUG: Print wallet info
@@ -71,6 +80,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       print('❌ DEBUG: Skipping API call - wallet not connected or address is null');
       setState(() {
         _isLoadingGoals = false;
+        _isLoadingInProgress = false;  // Reset guard
       });
       return;
     }
@@ -93,12 +103,14 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
           setState(() {
             _goals = goals;
             _isLoadingGoals = false;
+            _isLoadingInProgress = false;  // Reset guard
           });
         } else {
           print('DEBUG: No goals data in response');
           setState(() {
             _goals = [];
             _isLoadingGoals = false;
+            _isLoadingInProgress = false;  // Reset guard
           });
         }
       } else {
@@ -106,6 +118,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         setState(() {
           _goals = [];
           _isLoadingGoals = false;
+          _isLoadingInProgress = false;  // Reset guard
         });
       }
     } catch (e) {
@@ -113,6 +126,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       setState(() {
         _goals = [];
         _isLoadingGoals = false;
+        _isLoadingInProgress = false;  // Reset guard
       });
     }
   }
@@ -593,21 +607,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         setState(() {
                           _showSpeedDial = false;
                         });
-                        // Navigate and wait for result
+                        // Navigate to add saving screen
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const AddSavingScreen(),
                           ),
                         );
+
                         // Refresh goals if deposit was successful
-                        if (result == true) {
+                        if (result == true && mounted) {
                           setState(() {
-                            _goals = [];
-                            _isLoadingGoals = true;
+                            _isLoadingGoals = true;  // Show loading, keep old goals visible
                           });
-                          await Future.delayed(const Duration(milliseconds: 500));
-                          await _loadGoals();
+                          await _loadGoals();  // Fetch fresh data
                         }
                       },
                     ),
@@ -680,21 +693,20 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
                         );
                       }),
                       _buildNavItem(Icons.layers, false, () async {
-                        // Navigate and wait for result
+                        // Navigate to add saving screen
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) => const AddSavingScreen(),
                           ),
                         );
+
                         // Refresh goals if deposit was successful
-                        if (result == true) {
+                        if (result == true && mounted) {
                           setState(() {
-                            _goals = [];
-                            _isLoadingGoals = true;
+                            _isLoadingGoals = true;  // Show loading, keep old goals visible
                           });
-                          await Future.delayed(const Duration(milliseconds: 500));
-                          await _loadGoals();
+                          await _loadGoals();  // Fetch fresh data
                         }
                       }),
                       _buildNavItem(Icons.swap_horiz, false, () {
