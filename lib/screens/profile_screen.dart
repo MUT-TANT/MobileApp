@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/services/wallet_service.dart';
 import 'package:stacksave/screens/donation_settings_screen.dart';
+import 'package:stacksave/screens/launch_b_screen.dart';
 import 'package:image_picker/image_picker.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -435,23 +436,29 @@ class _ProfileScreenState extends State<ProfileScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Logout'),
-        content: const Text('Are you sure you want to logout?'),
+        content: const Text('Are you sure you want to disconnect your wallet?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              // Implement logout logic
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Logged out successfully'),
-                  backgroundColor: Colors.red,
-                  behavior: SnackBarBehavior.floating,
-                  duration: Duration(seconds: 2),
+            onPressed: () async {
+              Navigator.pop(context); // Close dialog
+
+              // Get wallet service
+              final walletService = context.read<WalletService>();
+
+              // Disconnect wallet
+              await walletService.disconnect();
+
+              // Navigate back to login screen (clear all navigation)
+              if (!mounted) return;
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(
+                  builder: (context) => const LaunchBScreen(),
                 ),
+                (route) => false, // Remove all previous routes
               );
             },
             child: const Text(

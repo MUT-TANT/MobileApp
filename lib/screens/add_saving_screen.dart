@@ -4,6 +4,7 @@ import 'package:visibility_detector/visibility_detector.dart';
 import 'package:stacksave/constants/colors.dart';
 import 'package:stacksave/services/api_service.dart';
 import 'package:stacksave/services/wallet_service.dart';
+import 'package:stacksave/services/price_service.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:web3dart/web3dart.dart';
 
@@ -24,7 +25,6 @@ class AddSavingScreen extends StatefulWidget {
 class _AddSavingScreenState extends State<AddSavingScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _amountController = TextEditingController();
-  final TextEditingController _walletAddressController = TextEditingController();
   final TextEditingController _cardNumberController = TextEditingController();
   final TextEditingController _cvcController = TextEditingController();
   final TextEditingController _expiryController = TextEditingController();
@@ -37,6 +37,12 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
   // Real-time data from backend
   List<Map<String, dynamic>> _realGoals = [];
   bool _isLoadingGoals = true;
+
+  // USD to DAI conversion
+  double _daiExchangeRate = 1.0;
+  double _daiEquivalent = 0.0;
+  bool _isLoadingPrice = false;
+  final PriceService _priceService = PriceService();
 
   // Get mode info
   Map<String, dynamic> get _modeInfo {
@@ -94,12 +100,15 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
         _scrollOffset = _scrollController.offset;
       });
     });
-    // Listen to amount changes for real-time calculation
+    // Listen to amount changes for real-time calculation AND conversion
     _amountController.addListener(() {
+      _updateDaiConversion();
       setState(() {});
     });
     // Fetch real data from backend
     _loadUserGoals();
+    // Fetch DAI exchange rate
+    _fetchDaiExchangeRate();
   }
 
   // Fetch user's goals from database
@@ -145,11 +154,43 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
     }
   }
 
+  /// Fetch DAI/USD exchange rate from CoinGecko
+  Future<void> _fetchDaiExchangeRate() async {
+    setState(() => _isLoadingPrice = true);
+
+    try {
+      _daiExchangeRate = await _priceService.getDaiUsdRate();
+      _updateDaiConversion();
+    } catch (e) {
+      print('❌ Error fetching exchange rate: $e');
+      // Use fallback rate
+      _daiExchangeRate = 1.0;
+    } finally {
+      setState(() => _isLoadingPrice = false);
+    }
+  }
+
+  /// Update DAI equivalent when USD amount changes
+  void _updateDaiConversion() {
+    if (_amountController.text.isEmpty) {
+      setState(() => _daiEquivalent = 0.0);
+      return;
+    }
+
+    try {
+      final usdAmount = double.parse(_amountController.text.replaceAll(',', ''));
+      setState(() {
+        _daiEquivalent = usdAmount / _daiExchangeRate;
+      });
+    } catch (e) {
+      setState(() => _daiEquivalent = 0.0);
+    }
+  }
+
   @override
   void dispose() {
     _scrollController.dispose();
     _amountController.dispose();
-    _walletAddressController.dispose();
     _cardNumberController.dispose();
     _cvcController.dispose();
     _expiryController.dispose();
@@ -184,116 +225,392 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
       return;
     }
 
-    // Show loading dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
+    // Get selected goal details
+    final selectedGoal = _realGoals.firstWhere(
+      (goal) => goal['id'] == _selectedGoalId,
+      orElse: () => {},
     );
+
+    if (selectedGoal.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selected goal not found'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
 
     try {
       // Get contract addresses from .env
       final stackSaveAddress = dotenv.env['STACKSAVE_CONTRACT']!;
-      final daiAddress = dotenv.env['DAI_ADDRESS']!;
 
-      // Convert amount to wei (DAI has 18 decimals)
-      final amount = double.parse(_amountController.text.replaceAll(',', ''));
-      final amountWei = BigInt.from(amount * 1e18);
+      // Currency from API is already the token address (e.g., 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)
+      final tokenAddress = selectedGoal['currency'] as String;
 
-      print('💰 Depositing: $amount DAI = $amountWei wei');
+      // Get display name for UI (USDC, DAI, or WETH)
+      final currencySymbol = _getCurrencySymbol(tokenAddress);
+
+      // Convert USD to DAI amount (user enters USD, we transact in DAI)
+      final usdAmount = double.parse(_amountController.text.replaceAll(',', ''));
+      final daiAmount = _daiEquivalent; // Already calculated
+      final amountWei = BigInt.from(daiAmount * 1e18);
+
+      print('💰 Depositing: \$$usdAmount USD = $daiAmount DAI = $amountWei wei');
+      print('🔍 VERIFICATION: Sending $amountWei wei to contract');
+      print('🔍 This equals: ${daiAmount.toStringAsFixed(6)} DAI (NOT ${usdAmount.toStringAsFixed(6)} DAI)');
       print('📍 StackSave: $stackSaveAddress');
-      print('📍 DAI: $daiAddress');
+      print('📍 Token: $tokenAddress');
       print('🎯 Goal ID: $_selectedGoalId');
 
-      // Step 1: Approve StackSave to spend DAI
-      print('✍️ Requesting approval...');
-      final approveTxHash = await walletService.approveToken(
-        tokenAddress: daiAddress,
-        spenderAddress: stackSaveAddress,
-        amount: amountWei,
-      );
-      print('✅ Approval TX: $approveTxHash');
+      // Pre-transaction validation: Check token balance
+      // TODO: Add balance check via wallet service or API
 
-      // Wait a bit for approval to be mined
-      await Future.delayed(const Duration(seconds: 2));
+      String? approveTxHash;
+      String? depositTxHash;
 
-      // Step 2: Call deposit on StackSave contract
-      print('✍️ Calling deposit...');
-      final depositTxHash = await walletService.contractCall(
-        contractAddress: stackSaveAddress,
-        functionName: 'deposit',
-        params: [
-          BigInt.from(_selectedGoalId!),
-          amountWei,
-        ],
-        functionParams: [
-          FunctionParameter('goalId', UintType()),
-          FunctionParameter('amount', UintType()),
-        ],
-      );
-      print('✅ Deposit TX: $depositTxHash');
-
-      // Close loading dialog
+      // Show two-step transaction dialog
       if (!mounted) return;
-      Navigator.pop(context);
-
-      // Show success dialog with transaction details
-      if (!mounted) return;
-      showDialog(
+      await showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('✅ Deposit Successful!'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Amount: \$${_amountController.text}'),
-              const SizedBox(height: 12),
-              const Text(
-                'Transaction Hash:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text(
+                'Confirm Deposit',
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              Text(
-                depositTxHash,
-                style: const TextStyle(fontSize: 10),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Depositing: ${daiAmount.toStringAsFixed(2)} $currencySymbol',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'You entered: \$${usdAmount.toStringAsFixed(2)} USD',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 12,
+                      color: AppColors.grayText,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Wei amount: $amountWei',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 10,
+                      color: AppColors.grayText,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Step 1: Approval
+                  _buildTransactionStep(
+                    stepNumber: 1,
+                    title: 'Approve Token',
+                    description: 'Allow StackSave to spend your $currencySymbol',
+                    txHash: approveTxHash,
+                    isActive: approveTxHash == null,
+                    isCompleted: approveTxHash != null,
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Step 2: Deposit
+                  _buildTransactionStep(
+                    stepNumber: 2,
+                    title: 'Deposit to Morpho',
+                    description: 'Stake in Morpho v2 vault',
+                    txHash: depositTxHash,
+                    isActive: approveTxHash != null && depositTxHash == null,
+                    isCompleted: depositTxHash != null,
+                  ),
+
+                  if (depositTxHash != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(
+                            Icons.check_circle,
+                            color: AppColors.primary,
+                            size: 20,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Your funds are now earning yield on Morpho v2!',
+                              style: TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 12,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 12),
-              const Text(
-                'Your funds are now staked in Morpho v2 and earning yield!',
-                style: TextStyle(fontSize: 12),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(dialogContext).pop(); // Close dialog
-                Navigator.of(context).pop(true); // Return to home with refresh signal
-              },
-              child: const Text('OK'),
-            ),
-          ],
+              actions: [
+                if (depositTxHash == null)
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancel'),
+                  ),
+                if (approveTxHash == null)
+                  ElevatedButton(
+                    onPressed: () async {
+                      try {
+                        // Step 1: Approve
+                        setDialogState(() {});
+                        final txHash = await walletService.approveToken(
+                          tokenAddress: tokenAddress,
+                          spenderAddress: stackSaveAddress,
+                          amount: amountWei,
+                        );
+                        approveTxHash = txHash;
+                        setDialogState(() {});
+                        print('✅ Approval TX: $txHash');
+                      } catch (e) {
+                        Navigator.pop(dialogContext);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Approval failed: ${e.toString()}'),
+                            backgroundColor: Colors.red,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Sign Approval'),
+                  )
+                else if (depositTxHash == null)
+                  ElevatedButton(
+                    onPressed: () async {
+                      try {
+                        // Step 2: Deposit
+                        setDialogState(() {});
+                        final txHash = await walletService.contractCall(
+                          contractAddress: stackSaveAddress,
+                          functionName: 'deposit',
+                          params: [
+                            BigInt.from(_selectedGoalId!),
+                            amountWei,
+                          ],
+                          functionParams: [
+                            FunctionParameter('goalId', UintType()),
+                            FunctionParameter('amount', UintType()),
+                          ],
+                        );
+                        depositTxHash = txHash;
+                        setDialogState(() {});
+                        print('✅ Deposit TX: $txHash');
+                      } catch (e) {
+                        Navigator.pop(dialogContext);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Deposit failed: ${e.toString()}'),
+                            backgroundColor: Colors.red,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Sign Deposit'),
+                  )
+                else
+                  ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      Navigator.of(context).pop(true); // Return with refresh signal
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('Done'),
+                  ),
+              ],
+            );
+          },
         ),
       );
     } catch (e) {
-      // Close loading dialog
-      if (!mounted) return;
-      Navigator.pop(context);
-
       // Show error
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Deposit failed: ${e.toString()}'),
+          content: Text('Transaction failed: ${e.toString()}'),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
           duration: const Duration(seconds: 4),
         ),
       );
     }
+  }
+
+  // Helper to get currency symbol for display from token address
+  String _getCurrencySymbol(String tokenAddress) {
+    final address = tokenAddress.toLowerCase();
+
+    // Map token addresses to display symbols
+    if (address == '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48') {
+      return 'USDC';
+    } else if (address == '0x6b175474e89094c44da98b954eedeac495271d0f') {
+      return 'DAI';
+    } else if (address == '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2') {
+      return 'WETH';
+    }
+
+    // Fallback: return first 6 chars of address if unknown
+    return '${address.substring(0, 6)}...';
+  }
+
+  // Build transaction step UI
+  Widget _buildTransactionStep({
+    required int stepNumber,
+    required String title,
+    required String description,
+    String? txHash,
+    required bool isActive,
+    required bool isCompleted,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Step indicator
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: isCompleted
+                ? AppColors.primary
+                : isActive
+                    ? AppColors.primary.withOpacity(0.2)
+                    : Colors.grey.shade200,
+            shape: BoxShape.circle,
+          ),
+          child: Center(
+            child: isCompleted
+                ? const Icon(
+                    Icons.check,
+                    color: Colors.white,
+                    size: 18,
+                  )
+                : Text(
+                    '$stepNumber',
+                    style: TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isActive ? AppColors.primary : Colors.grey,
+                    ),
+                  ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        // Step content
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: isActive || isCompleted
+                      ? AppColors.black
+                      : Colors.grey,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                style: TextStyle(
+                  fontFamily: 'Poppins',
+                  fontSize: 11,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              if (txHash != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'TX: ${txHash.substring(0, 10)}...${txHash.substring(txHash.length - 8)}',
+                  style: TextStyle(
+                    fontFamily: 'Poppins',
+                    fontSize: 10,
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+              if (isActive && txHash == null) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          AppColors.primary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Waiting for signature...',
+                      style: TextStyle(
+                        fontFamily: 'Poppins',
+                        fontSize: 10,
+                        color: Colors.grey.shade600,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -526,11 +843,24 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                               color: AppColors.black,
                             ),
                             decoration: InputDecoration(
-                              hintText: '\$30,00',
+                              hintText: '30.00',
+                              prefixText: '\$ ',
+                              suffixText: 'USD',
                               hintStyle: TextStyle(
                                 fontFamily: 'Poppins',
                                 fontSize: 14,
                                 color: AppColors.black.withOpacity(0.5),
+                              ),
+                              prefixStyle: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 14,
+                                color: AppColors.black,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              suffixStyle: const TextStyle(
+                                fontFamily: 'Poppins',
+                                fontSize: 14,
+                                color: AppColors.grayText,
                               ),
                               filled: true,
                               fillColor: const Color(0xFFE8F5E9),
@@ -542,6 +872,47 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                                 horizontal: 16,
                                 vertical: 16,
                               ),
+                            ),
+                          ),
+
+                          const SizedBox(height: 12),
+
+                          // DAI Conversion Display
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE8F5E9),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.swap_horiz,
+                                  color: AppColors.primary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'You\'ll pay ${_daiEquivalent.toStringAsFixed(2)} DAI',
+                                    style: const TextStyle(
+                                      fontFamily: 'Poppins',
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                                if (_isLoadingPrice)
+                                  const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
 
@@ -753,7 +1124,7 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                             const SizedBox(height: 16),
                             if (_selectedPaymentMethod == 'Wallet') ...[
                               const Text(
-                                'Wallet Address',
+                                'Connected Wallet',
                                 style: TextStyle(
                                   fontFamily: 'Poppins',
                                   fontSize: 14,
@@ -762,31 +1133,42 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                                 ),
                               ),
                               const SizedBox(height: 8),
-                              TextField(
-                                controller: _walletAddressController,
-                                style: const TextStyle(
-                                  fontFamily: 'Poppins',
-                                  fontSize: 14,
-                                  color: AppColors.black,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: '0x742d35Cc6634C0532925a3b...',
-                                  hintStyle: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 14,
-                                    color: AppColors.black.withOpacity(0.5),
-                                  ),
-                                  filled: true,
-                                  fillColor: const Color(0xFFE8F5E9),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 16,
-                                  ),
-                                ),
+                              Consumer<WalletService>(
+                                builder: (context, walletService, child) {
+                                  return Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 16,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFE8F5E9),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.check_circle,
+                                          color: AppColors.primary,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            walletService.walletAddress ?? 'Not connected',
+                                            style: const TextStyle(
+                                              fontFamily: 'Poppins',
+                                              fontSize: 14,
+                                              color: AppColors.black,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
                               ),
                             ] else if (_selectedPaymentMethod == 'Mastercard') ...[
                               const Text(

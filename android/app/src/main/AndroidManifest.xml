@@ -58,5 +58,53 @@
         <package android:name="io.gnosis.safe"/>
         <package android:name="me.rainbow"/>
         <package android:name="com.coinbase.android"/>
+        <package android:name="com.okinc.okex.gp"/>
+
+        <!-- Generic WalletConnect intent queries -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="wc" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="ethereum" />
+        </intent>
+
+        <!-- OKX Wallet deep link scheme (CRITICAL for launching OKX wallet) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="okx" />
+        </intent>
+
+        <!-- MetaMask deep link scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="metamask" />
+        </intent>
+
+        <!-- Trust Wallet deep link scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="trust" />
+        </intent>
+
+        <!-- Rainbow Wallet deep link scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="rainbow" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 </manifest>

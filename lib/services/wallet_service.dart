@@ -2,7 +2,9 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:reown_appkit/reown_appkit.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:web3dart/web3dart.dart';
 import 'package:web3dart/crypto.dart';
 
@@ -59,6 +61,29 @@ class WalletService extends ChangeNotifier {
     try {
       _errorMessage = null;
 
+      // Configure custom chain (Tenderly fork = chain 8) BEFORE creating modal
+      // This adds chain 8 to the WalletConnect session during handshake
+      ReownAppKitModalNetworks.removeSupportedNetworks('solana');
+      ReownAppKitModalNetworks.removeTestNetworks();
+      ReownAppKitModalNetworks.removeSupportedNetworks('eip155');
+
+      // Add ONLY chain 8 (Tenderly fork) with RPC from .env
+      ReownAppKitModalNetworks.addSupportedNetworks('eip155', [
+        ReownAppKitModalNetworkInfo(
+          name: 'Tenderly Fork',
+          chainId: '8',
+          currency: 'ETH',
+          rpcUrl: dotenv.env['RPC_URL']!,
+          explorerUrl: 'https://dashboard.tenderly.co/explorer/vnet',
+          isTestNetwork: true,
+        ),
+      ]);
+
+      if (kDebugMode) {
+        print('✅ Configured Tenderly fork (chain 8) as supported network');
+        print('📡 RPC: ${dotenv.env['RPC_URL']}');
+      }
+
       _appKitModal = ReownAppKitModal(
         context: context,
         projectId: projectId,
@@ -92,7 +117,21 @@ class WalletService extends ChangeNotifier {
   void _onModalConnect(ModalConnect? event) {
     if (kDebugMode) {
       final chainId = _appKitModal?.selectedChain?.chainId ?? '1';
-      print('Modal connected: ${event?.session.getAddress(chainId)}');
+      print('✅ Wallet connected!');
+      print('📍 Address: ${event?.session.getAddress(chainId)}');
+      print('🔗 Selected Chain ID: $chainId');
+
+      // VERIFY: Check if chain 8 is in the session
+      final accounts = _appKitModal?.session?.getAccounts();
+      final namespaces = _appKitModal?.session?.namespaces;
+      print('📋 Session accounts: $accounts');
+      print('🌐 Session namespaces: $namespaces');
+
+      if (chainId == '8') {
+        print('✅ SUCCESS: Chain 8 is supported in session!');
+      } else {
+        print('⚠️  WARNING: Selected chain is $chainId, not 8!');
+      }
     }
     onSessionConnect?.call();
     notifyListeners();
@@ -185,14 +224,24 @@ class WalletService extends ChangeNotifier {
         if (gasLimit != null) 'gas': gasLimit,
       };
 
+      // Note: The request() method automatically launches the wallet
+      // via internal _launchRequestOnWallet() call. No manual launch needed.
+
       // Request signature from wallet using eth_sendTransaction
+      // Use chain ID from .env (Tenderly fork = chain 8)
+      // Add timeout to prevent indefinite hanging
       final txHash = await _appKitModal!.request(
         topic: _appKitModal!.session!.topic,
-        chainId: 'eip155:${_appKitModal!.selectedChain!.chainId}',
+        chainId: 'eip155:${dotenv.env['CHAIN_ID']}',
         request: SessionRequestParams(
           method: 'eth_sendTransaction',
           params: [params],
         ),
+      ).timeout(
+        const Duration(minutes: 3),
+        onTimeout: () {
+          throw Exception('Transaction request timed out - please check your wallet');
+        },
       );
 
       if (kDebugMode) {
