@@ -61,6 +61,41 @@ StackSave is built on:
 
 ## What Makes StackSave Different?
 
+### Decentralized & Non-Custodial
+Unlike traditional banking apps, StackSave is built on blockchain technology. You maintain complete control of your funds through your own crypto wallet - no middlemen, no bank accounts needed.
+
+### Goal-Oriented Saving
+Create specific savings goals with custom targets and deadlines. Whether you're saving for an emergency fund, a vacation, a new car, or any personal goal, StackSave helps you visualize and track your progress.
+
+### Earn While You Save (Morpho Integration) 📈
+Your deposits don't just sit idle - they **earn yield** through integration with **Morpho Protocol**, a leading DeFi lending platform. Earn competitive APY on your savings automatically while maintaining full liquidity and access to your funds anytime.
+
+**Benefits**:
+- Passive income on your savings
+- Optimized lending rates via Morpho
+- No lock-up periods
+- Transparent, audited smart contracts
+
+[Learn more about Morpho Integration →](../web3/morpho-integration.md)
+
+### Social Impact (Donation Feature) 🤝
+Save for yourself while giving back to the community. **Allocate a percentage of your savings** to charitable causes you care about. All donations are tracked transparently on-chain, showing your positive impact on the world.
+
+**How it works**:
+- Set donation percentage (1%, 5%, 10%, or custom)
+- Choose from verified charitable organizations
+- Track your total donation impact
+- All donations recorded on-chain for transparency
+
+**Example**:
+```
+Save $1,000 → Allocate 5% to charity
+Your Savings: $950
+Donation: $50 to your chosen cause
+```
+
+### Comparison Table
+
 | Feature | Traditional Apps | StackSave |
 |---------|-----------------|-----------|
 | Custody | Custodial | Self-custody via wallet |
@@ -68,6 +103,8 @@ StackSave is built on:
 | Wallet Support | Bank accounts | Any WalletConnect wallet |
 | Platform | Often web-only | Native mobile (iOS/Android) |
 | Privacy | Centralized data | Local storage + blockchain |
+| **Yield Earning** | **No / Low APY** | **Yes, via Morpho Protocol** |
+| **Donations** | **No** | **Yes, flexible allocation** |
 
 ## Getting Started
 

@@ -100,6 +100,68 @@ Connect any compatible wallet:
 - Export transaction records
 - On-chain verification links
 
+## 🤝 Donation & Social Impact
+
+### Donation Allocation
+**Give back while you save!**
+
+- **Set donation percentage**: Allocate a portion of your savings to causes you care about
+- **Flexible allocation**: Choose 1%, 5%, 10% or custom percentage
+- **Track separately**: Donations tracked independently from savings
+- **Multiple causes**: Support different charitable organizations
+- **Transparent**: All donations recorded on-chain
+
+**Example**:
+```
+Your Savings Goal: $1,000
+Donation Allocation: 5%
+---
+Your Net Savings: $950
+Donation Amount: $50 (goes to chosen cause)
+```
+
+### Social Features
+- View total community impact
+- See how much StackSave users have donated
+- Share your impact (optional)
+- Choose from verified charitable organizations
+
+## 📈 Morpho Integration (DeFi Yield)
+
+### Earn While You Save
+**Powered by Morpho Protocol**
+
+StackSave integrates with [Morpho](https://morpho.org), a leading DeFi lending protocol, to help your savings grow:
+
+### Key Benefits
+- **Passive Income**: Earn yield on your deposited funds
+- **Optimized Rates**: Morpho optimizes lending rates for best APY
+- **Security**: Audited smart contracts, non-custodial
+- **Transparency**: All yields visible on-chain
+- **Auto-compound**: Earnings automatically added to your goals
+
+### How It Works
+1. **Deposit to Goal**: Your funds go into StackSave savings goal
+2. **Morpho Lending**: Funds automatically lent via Morpho protocol
+3. **Earn Yield**: Receive competitive APY on deposits
+4. **Withdraw Anytime**: Access your funds + earnings whenever needed
+
+### Yield Rates
+- **Current APY**: Variable, based on Morpho market rates
+- **No Lock-up**: Withdraw anytime, no penalties
+- **Compounding**: Interest compounds automatically
+- **Real-time Tracking**: See your earnings grow daily
+
+### Example
+```
+Deposit: $1,000 USDC
+Morpho APY: 5% annually
+After 1 month: $1,004.17 (principal + interest)
+After 1 year: $1,050 (with compounding)
+```
+
+**Learn more**: [Morpho Integration Guide](../web3/morpho-integration.md)
+
 ## 👤 Profile & Settings
 
 ### User Profile
