@@ -14,6 +14,8 @@ class WalletService extends ChangeNotifier {
   ReownAppKitModal? _appKitModal;
   final DeepLinkHandler _deepLinkHandler = DeepLinkHandler();
   Web3Client? _web3client;
+  // Track whether we've already signaled an initial connect to the UI
+  bool _hasSignaledConnect = false;
 
   ReownAppKitModal? get appKitModal => _appKitModal;
 
@@ -156,7 +158,18 @@ class WalletService extends ChangeNotifier {
         print('⚠️  WARNING: Selected chain is $chainId, not 8!');
       }
     }
-    onSessionConnect?.call();
+    // Only call the UI callback the first time a session connects. This avoids
+    // showing a "wallet connected" UI message during subsequent internal
+    // connect events (for example after a transaction callback) which can
+    // confuse users when they're returned from the wallet.
+    if (!_hasSignaledConnect) {
+      onSessionConnect?.call();
+      _hasSignaledConnect = true;
+    } else {
+      if (kDebugMode) {
+        print('ℹ️ _onModalConnect: connect event ignored (already signaled)');
+      }
+    }
     notifyListeners();
   }
 
@@ -164,6 +177,8 @@ class WalletService extends ChangeNotifier {
     if (kDebugMode) {
       print('Modal disconnected');
     }
+    // Reset the connect signal so future connections will notify the UI again
+    _hasSignaledConnect = false;
     onSessionDelete?.call();
     notifyListeners();
   }

@@ -453,6 +453,38 @@ class _AddSavingScreenState extends State<AddSavingScreen> {
                         depositTxHash = txHash;
                         setDialogState(() {});
                         print('✅ Deposit confirmed on blockchain: $txHash');
+
+                        // Sync goal from blockchain to update streak and progress immediately
+                        try {
+                          print('🔄 Syncing goal ${_selectedGoalId!} from blockchain...');
+                          await ApiService().syncGoalFromBlockchain(_selectedGoalId!);
+                          print('✅ Goal synced - streak and progress updated');
+                        } catch (syncError) {
+                          print('⚠️ Sync failed: $syncError (goal will update via event listener)');
+                          // Don't show error to user - this is a best-effort sync
+                          // Event listener will eventually update the goal
+                        }
+                        // Close the dialog and navigate back (or return a refresh signal)
+                        // so the app doesn't leave the user stuck on the same screen.
+                        if (mounted) {
+                          // Close the confirm dialog
+                          Navigator.pop(dialogContext);
+
+                          // If this screen was pushed onto the navigation stack, pop it
+                          // and return true to signal the caller to refresh.
+                          if (Navigator.canPop(context)) {
+                            Navigator.of(context).pop(true);
+                          } else {
+                            // If embedded (e.g. in a TabView), show a success snackbar
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Deposit successful'),
+                                backgroundColor: Colors.green,
+                                behavior: SnackBarBehavior.floating,
+                              ),
+                            );
+                          }
+                        }
                       } catch (e) {
                         isWaitingDepositConfirmation = false;
                         Navigator.pop(dialogContext);

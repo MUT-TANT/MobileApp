@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:io';
 
@@ -144,6 +145,37 @@ class ApiService {
   Future<Map<String, dynamic>> getUserPortfolio(String address) async {
     try {
       final response = await _dio.get('/users/${address.toLowerCase()}/portfolio');
+      return _handleResponse(response);
+    } on DioException catch (e) {
+      throw _handleDioError(e);
+    }
+  }
+
+  /// Sync goal from blockchain (force immediate update)
+  /// POST /goals/:goalId/sync
+  Future<Map<String, dynamic>> syncGoalFromBlockchain(int goalId) async {
+    try {
+      if (kDebugMode) {
+        print('🔄 API: Syncing goal $goalId from blockchain...');
+      }
+      final response = await _dio.post('/goals/$goalId/sync');
+      if (kDebugMode) {
+        print('✅ API: Goal $goalId synced successfully');
+      }
+      return _handleResponse(response);
+    } on DioException catch (e) {
+      if (kDebugMode) {
+        print('❌ API: Failed to sync goal $goalId: ${e.message}');
+      }
+      throw _handleDioError(e);
+    }
+  }
+
+  /// Get transaction history for a goal
+  /// GET /goals/:goalId/transactions
+  Future<Map<String, dynamic>> getGoalTransactions(int goalId) async {
+    try {
+      final response = await _dio.get('/goals/$goalId/transactions');
       return _handleResponse(response);
     } on DioException catch (e) {
       throw _handleDioError(e);
