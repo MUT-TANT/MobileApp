@@ -198,6 +198,37 @@ class WalletService extends ChangeNotifier {
     return _appKitModal?.selectedChain?.chainId == chainId;
   }
 
+  /// Manually launch wallet app (workaround for broken auto-launch on Android)
+  Future<void> _launchWalletManually() async {
+    try {
+      // Get wallet deep link from session metadata
+      final redirect = _appKitModal?.session?.peer?.metadata.redirect?.native;
+
+      if (redirect != null && redirect.isNotEmpty) {
+        if (kDebugMode) {
+          print('🚀 Manually launching wallet: $redirect');
+        }
+
+        // Launch wallet app using url_launcher
+        final uri = Uri.parse(redirect);
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+
+        if (kDebugMode) {
+          print('✅ Wallet launched successfully');
+        }
+      } else {
+        if (kDebugMode) {
+          print('⚠️  No wallet redirect URL found in session metadata');
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ Error launching wallet manually: $e');
+      }
+      // Don't throw - wallet might already be open or launch might happen differently
+    }
+  }
+
   /// Send a transaction and get it signed by the connected wallet
   Future<String> sendTransaction({
     required String to,
@@ -224,8 +255,12 @@ class WalletService extends ChangeNotifier {
         if (gasLimit != null) 'gas': gasLimit,
       };
 
-      // Note: The request() method automatically launches the wallet
-      // via internal _launchRequestOnWallet() call. No manual launch needed.
+      // WORKAROUND: Manually launch wallet before request
+      // The request() method's auto-launch (_launchRequestOnWallet) is broken on Android
+      await _launchWalletManually();
+
+      // Small delay to let wallet app open
+      await Future.delayed(const Duration(milliseconds: 500));
 
       // Request signature from wallet using eth_sendTransaction
       // Use chain ID from .env (Tenderly fork = chain 8)
