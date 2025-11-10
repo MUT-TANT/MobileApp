@@ -539,11 +539,7 @@ This project is licensed under the MIT License - see the [LICENSE](docs/resource
 * ❓ [FAQ](docs/resources/faq.md)
 * 🔧 [Troubleshooting](docs/resources/troubleshooting.md)
 
-### Community
 
-* 💬 [GitHub Discussions](https://github.com/MUTESOL/MobileApp/discussions)
-* 🐛 [Report Issues](https://github.com/MUTESOL/MobileApp/issues)
-* 📧 Email: support@stacksave.io
 
 ### Hackathon Support
 
@@ -580,43 +576,5 @@ This project is licensed under the MIT License - see the [LICENSE](docs/resource
 * MobileApp Developer: Mutiara Setya
 
 ***
-
-## 📞 Contact
-
-* **Website**: [stacksave.io](https://stacksave.io) _(coming soon)_
-* **Email**: team@stacksave.io
-* **GitHub Org**: [MUT-TANT](https://github.com/MUT-TANT)
-* **Twitter**: [@StackSaveApp](https://twitter.com/StackSaveApp) _(coming soon)_
-
-***
-
-## 🗺️ Roadmap
-
-### Phase 1 - MVP ✅ (Current)
-
-* [x] Basic savings goals
-* [x] WalletConnect integration
-* [x] Deposit/Withdrawal
-* [x] Portfolio dashboard
-
-### Phase 2 - Enhancement 🚧 (Q2 2025)
-
-* [ ] Automated savings
-* [ ] Multiple networks
-* [ ] Advanced analytics
-* [ ] Social features
-
-### Phase 3 - DeFi Integration 📋 (Q3 2025)
-
-* [ ] Interest earning
-* [ ] Staking integration
-* [ ] Yield optimization
-* [ ] NFT rewards
-
-***
-
-### ⭐ Star this repo if you find it useful!
-
-**Made with ❤️ by the MUT-TANT Team**
 
 [⬆ Back to top](./#stacksave-)
