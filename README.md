@@ -67,7 +67,6 @@ You can run StackSave in **two ways**:
 
     ```bash
     git clone https://github.com/MUT-TANT/MobileApp.git
-    cd MobileApp
     ```
 2.  **Install Dependencies**
 
@@ -138,7 +137,7 @@ StackSave uses a custom EVM network for this hackathon.
 ```
 Network Name:     StackSave Network
 RPC URL:          https://rpc.tenderly.co/fork/82c86106-662e-4d7f-a974-c311987358ff
-Chain ID:         1 (or as specified)
+Chain ID:         8 (or as specified)
 Currency Symbol:  ETH
 Block Explorer:   https://dashboard.tenderly.co/explorer/vnet/82c86106-662e-4d7f-a974-c311987358ff/transactions
 ```
@@ -153,7 +152,7 @@ Block Explorer:   https://dashboard.tenderly.co/explorer/vnet/82c86106-662e-4d7f
     ```
     Network Name: StackSave Network
     RPC URL: https://rpc.tenderly.co/fork/82c86106-662e-4d7f-a974-c311987358ff
-    Chain ID: 1
+    Chain ID: 8
     Symbol: ETH
     ```
 5. **Save**
@@ -441,7 +440,6 @@ Comprehensive documentation is available:
 
     ```bash
     git clone https://github.com/MUT-TANT/MobileApp.git
-    cd MobileApp
     ```
 2.  **Install Dependencies**
 
